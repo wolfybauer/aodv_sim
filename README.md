@@ -22,12 +22,12 @@
 
 initial commit. not quite working yet
 - sim:
- - click still just sends rreq
- - need implement show_node_contents() etc
+  - click still just sends rreq
+  - need implement show_node_contents() etc
 - node.py:
- - logical errors and stuff yet unimplemented
- - structure getting there
+  - logical errors and stuff yet unimplemented
+  - structure getting there
 - protocol-related:
- - ugly, clunky
- - ..stupid?
- - works for now
+  - ugly, clunky
+  - ..stupid?
+  - works for now

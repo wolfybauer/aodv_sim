@@ -48,6 +48,12 @@ class Expirable:
             self.lifetime = lifetime
         self.timestamp = time.time()
 
+# blacklisted node
+class BadNode(Expirable):
+    def __init__(self, orig_addr):
+        super().__init__(lifetime=config.BLACKLIST_TIMEOUT)
+        self.orig_addr = orig_addr
+
 
 # outbox data waiting for valid route
 class QueuedData(Expirable):
@@ -57,18 +63,16 @@ class QueuedData(Expirable):
         self.data = data
 
 
-# expirable rreq structure
+# expirable rreq structure, pass it a RREQ
 # for blacklisting nodes exhibiting strange behavior
 class RecentRREQ(Expirable):
     def __eq__(self, other):
-        if hasattr(other, 'dest_addr') and hasattr(other, 'orig_seq'):
-            return self.dest_addr == other.dest_addr and self.orig_seq == other.orig_seq
-        else:
-            return False
-    def __init__(self, rreq):
+        return (self.orig_addr == other.orig_addr and
+                self.rreq_id == other.rreq_id)
+    def __init__(self, rreq:RREQ):
         super().__init__(lifetime=config.PATH_DISCOVERY_TIME)
-        self.orig_seq = rreq.orig_seq
-        self.dest_addr = rreq.dest_addr
+        self.orig_addr = rreq.orig_addr
+        self.rreq_id = rreq.rreq_id
 
 # considered "valid" if seq_num and next hop fields not empty, AND timer not expired
 # always initialized with ACTIVE_ROUTE_TIMEOUT
@@ -146,7 +150,7 @@ class Node:
         self.neighbors = {}
 
         # store recent received rreqs {orig_addr : {dest_addr : orig_seq}}
-        self.recent_rreqs = {}
+        self.recent_rreqs = []
 
         # blacklist nodes exhibiting strange/malicious behavior
         self.blacklist = []
@@ -196,33 +200,28 @@ class Node:
                 if self.neighbors[k].retries:
                     self._send_hello(k)
                 else:
-                    self.log(f'expire neighbor: {k}')
+                    self.log(f'expired neighbor: {k}')
                     rm.append(k)
         for k in rm:
             del self.neighbors[k]
 
-        # 6.5: count down, purge recent rreqs that have expired
-        rm = []
-        for orig in self.recent_rreqs.keys():
-            for dest in self.recent_rreqs[orig].keys():
-                self.recent_rreqs[orig][dest].update()
-                if not self.recent_rreqs[orig][dest].alive:
-                    rm.append([orig, dest])
-        for i in rm:
-            self.log(f'expired rreq: {i[0]}>>>{i[1]}')
-            del self.recent_rreqs[i[0]][i[1]]
+        # 6.5: update, purge expired recent rreqs
+        for i,_ in enumerate(self.recent_rreqs):
+            self.recent_rreqs[i].update()
+            if not self.recent_rreqs[i].alive:
+                r = self.recent_rreqs.pop(i)
+                self.log(f'rm recent rreq: {r}')
+                
 
         # count down route lifetimes
         self.routing_table.update()
         
         # update blacklist
-        rm = []
-        for i,addr in enumerate(self.blacklist):
-            if len(self.recent_rreqs[i]) < config.MAX_RECENT_RREQS:
-                rm.append(addr)
-        for i in rm:
-            self.log(f'unblacklisting: {i}')
-            self.blacklist.remove(i)
+        for i,_ in enumerate(self.blacklist):
+            self.blacklist[i].update()
+            if not self.blacklist[i].alive:
+                n = self.blacklist.pop(i)
+                self.log(f'unblacklisting: {n}')
         
         # update queued data
         for i,d in enumerate(self.queued):
@@ -251,6 +250,14 @@ class Node:
     # user should only ever use this to send stuff
     # protocol should handle all route maintenance etc
     def send(self, dest_addr:bytes, data:str):
+        
+        # if active neighbor, send immediately
+        neighbor = self.neighbors.get(dest_addr)
+        if neighbor and neighbor.alive:
+            self._send_data(dest_addr, data)
+            return
+        
+        # else look for route
         route = self.routing_table[dest_addr]
 
         # If route exists, send data
@@ -259,26 +266,37 @@ class Node:
         else:
             # No valid route, initiate route discovery (RREQ)
             self._send_rreq(dest_addr)
-            # Optionally, queue the data until a route is established
+            # queue data until route found
             self.queued.append(QueuedData(dest_addr, data))
         
     # only called when valid route exists
     # push packets into the tx fifo
     def _send_data(self, dest_addr:bytes, data:str):
         
-        # unicast address, aka next hop, aka recv
-        recv_addr = self.routing_table[dest_addr].next_hop
+        
         d = DATAGRAM()
+        p = Packet()
+        
+        # if dest is active neighbor, send directly
+        if (dest_addr in self.neighbors.keys() and
+            self.neighbors[dest_addr].alive):
+            recv_addr = dest_addr
+            ttl = 1
+        else:
+            # else get unicast address, aka next hop
+            recv_addr = self.routing_table[dest_addr].next_hop
+            ttl = 5
+
         # data fits in single packet
         if len(data) <= PAYLOAD_MAX_LEN:
             d.set_data(dest_addr=dest_addr, orig_addr=self.addr, orig_seq=self.seq_num, data=data)
-            self.tx_fifo.append(Packet().construct(AODVType.DATA, self.addr, recv_addr, d.pack(), 255))
+            self.tx_fifo.append(p.construct(AODVType.DATA, self.addr, recv_addr, d.pack(), ttl))
         # data too big for one packet
         else:
             i = 0
             while i < len(data):
                 d.set_data(dest_addr=dest_addr, orig_addr=self.addr, orig_seq=self.seq_num, data=data[i:i+PAYLOAD_MAX_LEN])
-                self.tx_fifo.append(Packet().construct(AODVType.DATA, self.addr, recv_addr, d.pack(), 255))
+                self.tx_fifo.append(p.construct(AODVType.DATA, self.addr, recv_addr, d.pack(), ttl))
                 i += PAYLOAD_MAX_LEN
 
     # process inbox
@@ -306,6 +324,8 @@ class Node:
             self._recv_rrep(p)
         elif p.aodvtype == AODVType.RERR:
             self._recv_rerr(p)
+        elif p.aodvtype == AODVType.DATA:
+            self._recv_data(p)
         else:
             # log.warning('recv unrecognized aodv packet')
             self.log('recv unrecognized aodv packet')
@@ -313,27 +333,11 @@ class Node:
     def _is_too_recent(self, rreq):
         # 6.5: ignore if in recent rreqs!!
         # first find orig_addr in recent_rreq keys
-        if rreq.orig_addr in self.recent_rreqs.keys():
-            # then find dest_addr in recent_rreqs[key]
-            if rreq.dest_addr in self.recent_rreqs[rreq.orig_addr].keys():
-                # ignore old or duplicate rreq
-                if rreq.orig_seq <= self.recent_rreqs[rreq.orig_addr][rreq.dest_addr].orig_seq:
-                    # log.warning(f'ignoring duplicate rreq: {rreq.orig_addr}')
-                    self.log(f'ignoring duplicate rreq: {rreq.orig_addr}')
-                    return True
-                # update rreq if less hops?
-                else:
-                    # log.warning(f'got duplicate rreq w/lower hops: {rreq.orig_addr}')
-                    self.log(f'got duplicate rreq w/lower hops: {rreq.orig_addr}')
-                    return True
-            else:
-                if len(self.recent_rreqs) >= config.MAX_RECENT_RREQS:
-                    # log.warning(f'too many rreqs. blacklisting: {rreq.orig_addr}')
-                    self.log(f'too many rreqs. blacklisting: {rreq.orig_addr}')
-                return True
-                
+        if rreq in self.recent_rreqs:
+            self.log(f'ignoring duplicate rreq: {rreq.orig_addr}')
+            return True
         else:
-            self.recent_rreqs[rreq.orig_addr] = {rreq.dest_addr : RecentRREQ(rreq)}
+            self.recent_rreqs.append(RecentRREQ(rreq))
             self.log(f'added recent rreq: {rreq.orig_addr}')
             return False
     
@@ -345,17 +349,19 @@ class Node:
         # exit if too recent
         if self._is_too_recent(rreq):
             return
-
+        # exit if rreq is one of mine
+        if rreq.orig_addr == self.addr:
+            return
+        
         # 6.5.4
-        if rreq.orig_addr != self.addr:
-            life = (time.time() + 2*config.NET_TRAVERSAL_TIME -
-                    2 * p.hops * config.NODE_TRAVERSAL_TIME)
-            route = self.routing_table[rreq.orig_addr]
-            if route:
-                life = max(life, route.lifetime)
-            self.routing_table.add_update(addr=rreq.orig_addr, next_hop=p.send_addr,
-                                          seq_num=rreq.orig_seq, hops=p.hops,
-                                          seq_valid=False, lifetime=life)
+        life = (time.time() + 2*config.NET_TRAVERSAL_TIME -
+                2 * p.hops * config.NODE_TRAVERSAL_TIME)
+        route = self.routing_table[rreq.orig_addr]
+        if route:
+            life = max(life, route.lifetime)
+        self.routing_table.add_update(addr=rreq.orig_addr, next_hop=p.send_addr,
+                                        seq_num=rreq.orig_seq, hops=p.hops,
+                                        seq_valid=True, lifetime=life)
             
         # if i am dest, send rrep
         if rreq.dest_addr == self.addr:
@@ -382,6 +388,7 @@ class Node:
     # what do on recv rrep
     def _recv_rrep(self, p:Packet):
         r = RREP(p.payload)
+
         print('\ngot rrep!')
         print(r)
         #TODO
@@ -396,23 +403,34 @@ class Node:
     def _send_hello(self, addr):
         self.neighbors[addr].retries -= 1
         self.neighbors[addr].reset()
-        self.tx_fifo.append(Packet().construct(aodvtype=AODVType.HELLO, send_addr=self.addr, recv_addr=addr, ttl=1))
+        p = Packet()
+        self.tx_fifo.append(p.construct(aodvtype=AODVType.HELLO, send_addr=self.addr, recv_addr=addr, ttl=1))
     
     def _recv_hello(self, p:Packet):
         self.neighbors[p.send_addr] = Neighbor(rssi=p.rssi, snr=p.snr)
         #TODO
     
-    def _recv_datagram(self, p:Packet):
+    def _recv_data(self, p:Packet):
         r = DATAGRAM(p.payload)
-        #TODO
+        # only unicast!
+        if p.recv_addr == self.addr:
+            if r.dest_addr == self.addr:
+                self.log(f'got datagram from: {r.orig_addr}')
+            else:
+                route = self.routing_table[r.dest_addr]
+                if route and route.valid():
+                    self._fwd_packet(p, route.next_hop)
+                else:
+                    self.log(f'ignoring unrouteable datagram {r.orig_addr}>>>{r.dest_addr}')
+                    #TODO send rerr?
 
     # fwd packet, changing just send/recv and checksum
     def _fwd_packet(self, p:Packet, recv_addr:bytes=BROADCAST_ADDR):
-        self.log(f'forwarding: {p.send_addr}')
-        p.send_addr = self.addr
-        p.recv_addr = recv_addr
-        self.tx_fifo.append(p.pack())
-        #TODO
+        if p.ttl > 0:
+            self.log(f'forwarding: {p.send_addr}')
+            p.send_addr = self.addr
+            p.recv_addr = recv_addr
+            self.tx_fifo.append(p.pack())
         
     def _fwd_rrep(self, rrep:RREP):
         #TODO

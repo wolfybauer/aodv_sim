@@ -126,6 +126,17 @@ def is_collision(node, signal):
             signal.collided.append(node.addr)
             return True
 
+def detect_collisions():
+    global nodes
+    global signals
+
+    # Check for collisions
+    for signal in signals:
+        for node in nodes:
+            # check collisions
+            if is_collision(node, signal):
+                node.aodv.on_recv(signal.payload)
+
 # generate random nodes
 def reset_nodes():
     global nodes
@@ -184,12 +195,7 @@ def loop():
         manager.update(dt)
         signals.update()
         nodes.update()
-        # Check for collisions
-        for signal in signals:
-            for node in nodes:
-                # check collisions
-                if is_collision(node, signal):
-                    node.aodv.on_recv(signal.payload)
+        detect_collisions()
 
 
 
