@@ -276,6 +276,8 @@ class Node:
         
         d = DATAGRAM()
         p = Packet()
+
+        route = self.routing_table[dest_addr]
         
         # if dest is active neighbor, send directly
         if (dest_addr in self.neighbors.keys() and
@@ -285,7 +287,7 @@ class Node:
         else:
             # else get unicast address, aka next hop
             recv_addr = self.routing_table[dest_addr].next_hop
-            ttl = 5
+            ttl = self.routing_table[dest_addr].hops
 
         # data fits in single packet
         if len(data) <= PAYLOAD_MAX_LEN:
@@ -363,39 +365,79 @@ class Node:
                                         seq_num=rreq.orig_seq, hops=p.hops,
                                         seq_valid=True, lifetime=life)
             
-        # if i am dest, send rrep
+        # 6.6.1 route reply generation by the destination
         if rreq.dest_addr == self.addr:
             r = RREP()
-            r.set_data(dest_addr=self.addr, orig_addr=rreq.orig_addr, dest_seq=self.seq_num)
+            # 6.6.1 weird language
+            if uincr(self.seq_num) == rreq.dest_seq:
+                self.seq_num = uincr(self.seq_num)
+            
+            r.set_data(dest_addr=self.addr, orig_addr=rreq.orig_addr, dest_seq=self.seq_num, hop_count=p.hops, lifetime=config.MY_ROUTE_TIMEOUT)
+            
             # r.set_flags() #TODO ?
-            self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), 255))
+            self.tx_fifo.append(p.construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=r.hop_count))
 
         # else forward
         else:
-            # if route "fresh enough", send rrep, else fwd rreq
+            # 6.6.2 not dest but fresh enough route
             route = self.routing_table[rreq.dest_addr]
             if route and route.valid():
                 r = RREP()
-                r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=route.seq_num)
+                lifetime = int(route.timestamp + route.lifetime - time.time())
+                r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=route.seq_num, hop_count=route.hops, lifetime=lifetime)
                 # r.set_flags() #TODO ?
-                self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), 255))
+                self.tx_fifo.append(p.construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops))
+                # 6.6.3 gratuitous rreps
+                if rreq.gratuitous:
+                    # must unicast rrep to dest
+                    route = self.routing_table[rreq.orig_addr]
+                    lifetime = int(route.timestamp + route.lifetime - time.time())
+                    r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=rreq.orig_seq, hop_count=route.hops, lifetime=lifetime)
+                    self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops))
 
             else:
                 self.routing_table.add_update(rreq.dest_addr, b'', rreq.dest_seq, 0, 1,)
                 self._fwd_packet(p)
         
 
-    # what do on recv rrep
+    # 6.7 receiving + forwarding rreps
     def _recv_rrep(self, p:Packet):
-        r = RREP(p.payload)
-
-        print('\ngot rrep!')
-        print(r)
-        #TODO
+        rrep = RREP(p.payload)
+        # create route to sender of rrep if not exists
+        # shortcut: route is valid is dest == sender
+        if rrep.dest_addr == p.send_addr:
+            seq_num = rrep.dest_seq
+            is_neighbor = True
+        else:
+            seq_num = 0
+            is_neighbor = False
+        self.routing_table.add_update(addr=p.send_addr, next_hop=p.send_addr, seq_num=seq_num, hops=p.hops, seq_valid=is_neighbor)
+        
+        # next increment hop count
+        rrep.hop_count += 1
+        
+        # create route to dest if not exists
+        self.routing_table.add_update(addr=rrep.dest_addr, next_hop=p.send_addr, seq_num=rrep.dest_seq, hops=rrep.hop_count, seq_valid=True, lifetime=rrep.lifetime)
+        
+        # forward if i am not dest
+        if rrep.dest_addr != self.addr:
+            # update rrep lifetime
+            rrep.lifetime = max(rrep.lifetime, config.ACTIVE_ROUTE_TIMEOUT)
+            # get route back to origin
+            route = self.routing_table[rrep.orig_addr]
+            if route:
+                if route.valid():
+                    self.log(f'fwd rrep. ttl: {p.ttl}')
+                    p.payload = rrep.pack()
+                    p.payload_len = len(p.payload)
+                    self._fwd_packet(p, route.next_hop)
+                else:
+                    #TODO ?
+                    pass
 
     # what do on recv rerr
     def _recv_rerr(self, p:Packet):
-        r = RERR(p.payload)
+        rrer = RERR(p.payload)
         print('\ngot rerr!')
         print(r)
         #TODO
@@ -431,12 +473,8 @@ class Node:
             p.send_addr = self.addr
             p.recv_addr = recv_addr
             self.tx_fifo.append(p.pack())
-        
-    def _fwd_rrep(self, rrep:RREP):
-        #TODO
-        pass
 
-    def _send_rreq(self, dest_addr):
+    def _send_rreq(self, dest_addr, gratuitous=True):
         r = RREQ()
         route = self.routing_table[dest_addr]
         if route:
@@ -452,7 +490,7 @@ class Node:
         self.seq_num = uincr(self.seq_num)
         self.rreq_id = uincr(self.rreq_id)
             
-        r.set_flags(0, repair, 0, 0, unknown)
+        r.set_flags(join=False, repair=repair, gratuitous=gratuitous, dest_only=False, unknown=unknown)
         r.set_data(dest_addr, self.addr, dest_seq, self.seq_num, self.rreq_id)
         self.tx_fifo.append(Packet().construct(AODVType.RREQ, self.addr, BROADCAST_ADDR, r.pack(), 255))
         self.log(f'sending rreq: {dest_addr}')

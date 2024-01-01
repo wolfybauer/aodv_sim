@@ -58,13 +58,13 @@ class Packet:
             self.header = b''
             self.payload = b''
 
-    def construct(self, aodvtype:int, send_addr:bytes, recv_addr:bytes=BROADCAST_ADDR, payload:bytes=b'', ttl:int=0):
+    def construct(self, aodvtype:int, send_addr:bytes, recv_addr:bytes=BROADCAST_ADDR, payload:bytes=b'', ttl:int=0, hops:int=0):
         self.send_addr = send_addr
         self.recv_addr = recv_addr
         self.aodvtype = aodvtype
         self.payload = payload
         self.payload_len = len(payload)
-        self.hops = 0
+        self.hops = hops
         self.ttl = ttl
         return self.pack()
 
@@ -148,7 +148,6 @@ class RREQ:
         self.dest_only = (flags >> 1) & 1
         self.unknown = flags & 1
     def unpack(self, raw:bytes):
-        print(len(raw))
         self.dest_addr = raw[:8]
         self.orig_addr = raw[8:16]
         self.dest_seq, self.orig_seq, self.rreq_id, self.flags = struct.unpack('>LLLB', raw[16:])
@@ -177,15 +176,20 @@ class RREP:
             self.dest_addr = b''
             self.orig_addr = b''
             self.dest_seq = 0
+            self.hop_count = 0
+            self.lifetime = 0
+
     def set_flags(self, repair:bool=0, req_ack:bool=0, prefix_sz:int=0):
         self.repair = repair                    # bit: repair flag (multicast)
         self.req_ack = req_ack                  # bit: ack requested flag
         self.prefix_sz = prefix_sz & 0b11111    # 5 bits: if !=0, next hop ok to use by any node with same 5bit prefix as dest_addr
         self.flags = repair<<6 | req_ack<<5 | (prefix_sz & 0b11111)
-    def set_data(self, dest_addr:bytes, orig_addr:bytes, dest_seq:int):
+    def set_data(self, dest_addr:bytes, orig_addr:bytes, dest_seq:int, hop_count:int, lifetime:int):
         self.dest_addr = dest_addr      # uint64_t
         self.orig_addr = orig_addr      # uint64_t
         self.dest_seq = dest_seq        # uint32_t
+        self.hop_count = hop_count      # uint8_t
+        self.lifetime = lifetime        # uint32_t
     def get_flags(self, flags:int):
         self.repair = (flags>>6) & 1
         self.req_ack = (flags>>5) & 1
@@ -193,11 +197,11 @@ class RREP:
     def unpack(self, raw:bytes):
         self.dest_addr = raw[:8]
         self.orig_addr = raw[8:16]
-        self.dest_seq, self.flags = struct.unpack('>LB', raw[16:])
+        self.dest_seq, self.flags, self.hop_count, self.lifetime = struct.unpack('>LBBL', raw[16:])
         self.get_flags(self.flags)
     def pack(self):
         raw = self.dest_addr + self.orig_addr
-        raw += struct.pack('>LB', self.dest_seq, self.flags)
+        raw += struct.pack('>LBBL', self.dest_seq, self.flags, self.hop_count, self.lifetime)
         return raw
 
 class RERR:

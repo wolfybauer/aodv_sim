@@ -175,6 +175,9 @@ def loop():
                     running = False
                 if event.key == pg.K_r:
                     reset_nodes()
+                if event.key == pg.K_TAB:
+                    send_dropdown.selected_option = active_recver
+                    recv_dropdown.selected_option = active_sender
             elif event.type == pg.MOUSEBUTTONDOWN:
                 for node in nodes:
                     if node.rect.collidepoint(event.pos):
