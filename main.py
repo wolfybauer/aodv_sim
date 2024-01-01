@@ -38,7 +38,7 @@ recv_dropdown = gui.elements.UIDropDownMenu(cfg.NODE_NAMES, cfg.NODE_NAMES[1], r
 # set up logger
 log_fmt = '%(asctime)s:%(levelname)s:%(message)s'
 log_datefmt = "%H:%M:%S"
-log.basicConfig(level=10, format=log_fmt, datefmt=log_datefmt)
+log.basicConfig(level=20, format=log_fmt, datefmt=log_datefmt)
 
 def get_signal_color(raw:bytes):
     if len(raw) < 24:
