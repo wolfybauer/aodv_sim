@@ -13,7 +13,18 @@ NODE_NAMES = ['john',
               'kwame',
               'abdullah',
               'narin',
-              'tasnim']
+              'tasnim',
+              'felix',
+              'joaquin',
+              'fatima',
+              'mahilet',
+              'antonio',
+              'wolfgang',
+              'sigmund',
+              'ralph']
+
+NUM_NODES = len(NODE_NAMES)
+# NUM_NODES = 8
 
 NODE_NAME2ADDR = {k:randbytes(8) for k in NODE_NAMES}
 NODE_ADDR2NAME = {v:k for k,v in NODE_NAME2ADDR.items()}

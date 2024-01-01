@@ -46,8 +46,8 @@ class Packet:
         if raw:
             self.deconstruct(raw)
         else:
-            self.send_addr = b''                # uint64_t (bytes)
-            self.recv_addr = b''                # uint64_t (bytes)
+            self.send_addr = DUMMY_ADDR                # uint64_t (bytes)
+            self.recv_addr = DUMMY_ADDR                # uint64_t (bytes)
             self.aodvtype = AODVType.UNKNOWN          # uint8_t
             self.hops = 0                       # uint8_t
             self.ttl = 0                        # uint8_t
@@ -123,8 +123,8 @@ class RREQ:
             self.dest_only = 0
             self.unknown = 0
             self.flags = 0
-            self.dest_addr = b''
-            self.orig_addr = b''
+            self.dest_addr = DUMMY_ADDR
+            self.orig_addr = DUMMY_ADDR
             self.dest_seq = 0
             self.orig_seq = 0
             self.rreq_id = 0
@@ -173,8 +173,8 @@ class RREP:
             self.req_ack = 0
             self.prefix_sz = 0
             self.flags = 0
-            self.dest_addr = b''
-            self.orig_addr = b''
+            self.dest_addr = DUMMY_ADDR
+            self.orig_addr = DUMMY_ADDR
             self.dest_seq = 0
             self.hop_count = 0
             self.lifetime = 0
@@ -259,11 +259,9 @@ class RERR:
         
 
 # # PACKET: HELLO
-# class HELLO:
-#     def __init__(self, raw:b):
-#         super().__init__(send_addr, recv_addr, AODVType.HELLO)
-#     def pack(self):
-#         return self.header(0)
+class HELLO(RREP):
+    def __init__(self, raw:bytes=b''):
+        super().__init__(raw)
 
 class DATAGRAM:
     def __repr__(self):

@@ -28,7 +28,7 @@ signals = pg.sprite.Group()
 # gui stuff
 manager = gui.UIManager((cfg.SCREEN_WIDTH, cfg.SCREEN_HEIGHT))
 hello_button = gui.elements.UIButton(relative_rect=pg.Rect(cfg.SEND_BUTTON_POS, cfg.SEND_BUTTON_DIM),
-                                            text='Say Hello',
+                                            text='ping',
                                             manager=manager,)
 # send_dropdown = gui.elements.UIDropDownMenu(name_strs, name_strs[0], relative_rect=pg.Rect((0,600,100,30)))
 send_dropdown = gui.elements.UIDropDownMenu(cfg.NODE_NAMES, cfg.NODE_NAMES[0], relative_rect=pg.Rect(cfg.SEND_DROPDOWN_POS, cfg.NAME_DROPDOWN_DIM))
@@ -108,24 +108,6 @@ class Transmission(pg.sprite.Sprite):
     def draw(self, surface):
         pg.draw.circle(surface, self.color, self.position, self.radius, 1)
 
-# check node signal collisions
-def is_collision(node, signal):
-    if signal.src_addr == node.addr:
-        return False
-    
-    # get distance to node
-    node_center = pg.Vector2(node.rect.center)
-    signal_center = pg.Vector2(signal.position)
-    distance = node_center.distance_to(signal_center)
-
-    # colliding = distance < signal.radius
-    if distance < signal.radius:
-        if node.addr in signal.collided:
-            return False
-        else:
-            signal.collided.append(node.addr)
-            return True
-
 def detect_collisions():
     global nodes
     global signals
@@ -134,15 +116,26 @@ def detect_collisions():
     for signal in signals:
         for node in nodes:
             # check collisions
-            if is_collision(node, signal):
-                node.aodv.on_recv(signal.payload)
+            if not signal.src_addr == node.addr:
+                # get distance to node
+                node_center = pg.Vector2(node.rect.center)
+                signal_center = pg.Vector2(signal.position)
+                distance = node_center.distance_to(signal_center)
+
+                # colliding = distance < signal.radius
+                if distance < signal.radius:
+                    if not node.addr in signal.collided:
+                        signal.collided.append(node.addr)
+                        node.aodv.on_recv(signal.payload)
 
 # generate random nodes
 def reset_nodes():
     global nodes
+    global signals
     global bg_sim
-    # clear old nodes
+    # clear old stuff
     nodes.empty()
+    signals.empty()
     bg_sim.fill(pg.Color(cfg.SIM_COLOR))
     # create some nodes
     for n in cfg.NODE_NAMES:
@@ -155,6 +148,7 @@ def reset_nodes():
 def loop():
     
     running = True
+    paused = False
     reset_nodes()
     # main loop
     while running:
@@ -169,53 +163,64 @@ def loop():
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 running == False
+            
+            # key events can happen anytime
             elif event.type == pg.KEYDOWN:
                 # esc key
                 if event.key == pg.K_ESCAPE:
                     running = False
                 if event.key == pg.K_r:
                     reset_nodes()
+                if event.key == pg.K_p:
+                    paused = not paused
                 if event.key == pg.K_TAB:
                     send_dropdown.selected_option = active_recver
                     recv_dropdown.selected_option = active_sender
-            elif event.type == pg.MOUSEBUTTONDOWN:
-                for node in nodes:
-                    if node.rect.collidepoint(event.pos):
-                        # node.emit_signal()
-                        node.aodv._send_rreq(cfg.NODE_NAME2ADDR[active_recver])
-                        print(node.aodv)
-            elif event.type == gui.UI_BUTTON_PRESSED:
-              if event.ui_element == hello_button:
-                  log.info(f'{active_sender}>>>{active_recver}')
-                  for node in nodes:
-                      if node.nickname == active_sender:
-                        #   node.aodv._send_rreq(cfg.NODE_NAME2ADDR[active_recver])
-                          node.aodv.send(cfg.NODE_NAME2ADDR[active_recver], 'abc'*100)
+            
+            # these events only do if unpaused
+            if not paused:
+                # handle click
+                if event.type == pg.MOUSEBUTTONDOWN:
+                    # handle click on node
+                    for node in nodes:
+                        if node.rect.collidepoint(event.pos):
+                            # node.emit_signal()
+                            node.aodv._send_rreq(cfg.NODE_NAME2ADDR[active_recver])
+                            print(node.aodv)
+                # handle ui interactions
+                elif event.type == gui.UI_BUTTON_PRESSED:
+                    if event.ui_element == hello_button:
+                        log.info(f'{active_sender}>>>{active_recver}')
+                        for node in nodes:
+                            if node.nickname == active_sender:
+                                #   node.aodv._send_rreq(cfg.NODE_NAME2ADDR[active_recver])
+                                node.aodv.send(cfg.NODE_NAME2ADDR[active_recver], 'ping')
             
             manager.process_events(event)
         
-        # logic stuff here
-        manager.update(dt)
-        signals.update()
-        nodes.update()
-        detect_collisions()
+        if not paused:
+            # logic stuff here
+            manager.update(dt)
+            signals.update()
+            nodes.update()
+            detect_collisions()
 
 
 
-        # graphics stuff here
-        screen.blit(bg_sim, (0,0))
-        screen.blit(bg_gui, (0,cfg.SIM_HEIGHT))
-        nodes.draw(bg_sim)
-        manager.draw_ui(screen)
+            # graphics stuff here
+            screen.blit(bg_sim, (0,0))
+            screen.blit(bg_gui, (0,cfg.SIM_HEIGHT))
+            nodes.draw(bg_sim)
+            manager.draw_ui(screen)
 
-        for signal in signals:
-            signal.draw(screen)
-        for node in nodes:
-            node.draw_address()
+            for signal in signals:
+                signal.draw(screen)
+            for node in nodes:
+                node.draw_address()
 
 
-        # end of loop
-        pg.display.flip()
+            # end of loop
+            pg.display.flip()
 
 if __name__ == '__main__':
     loop()

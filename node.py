@@ -328,6 +328,8 @@ class Node:
             self._recv_rerr(p)
         elif p.aodvtype == AODVType.DATA:
             self._recv_data(p)
+        elif p.aodvtype == AODVType.HELLO:
+            self._recv_hello(p)
         else:
             # log.warning('recv unrecognized aodv packet')
             self.log('recv unrecognized aodv packet')
@@ -425,15 +427,14 @@ class Node:
             rrep.lifetime = max(rrep.lifetime, config.ACTIVE_ROUTE_TIMEOUT)
             # get route back to origin
             route = self.routing_table[rrep.orig_addr]
-            if route:
-                if route.valid():
-                    self.log(f'fwd rrep. ttl: {p.ttl}')
-                    p.payload = rrep.pack()
-                    p.payload_len = len(p.payload)
-                    self._fwd_packet(p, route.next_hop)
-                else:
-                    #TODO ?
-                    pass
+            if route and route.valid() and p.recv_addr == self.addr:
+                self.log(f'fwd rrep. ttl: {p.ttl}')
+                p.payload = rrep.pack()
+                p.payload_len = len(p.payload)
+                self._fwd_packet(p, route.next_hop)
+            else:
+                #TODO ?
+                pass
 
     # what do on recv rerr
     def _recv_rerr(self, p:Packet):
@@ -444,13 +445,18 @@ class Node:
     
     def _send_hello(self, addr):
         self.neighbors[addr].retries -= 1
-        self.neighbors[addr].reset()
+        self.neighbors[addr].reset(config.HELLO_LIFETIME)
+        h = HELLO()
+        h.dest_addr = self.addr
+        h.dest_seq = self.seq_num
+        h.lifetime = config.HELLO_LIFETIME
         p = Packet()
-        self.tx_fifo.append(p.construct(aodvtype=AODVType.HELLO, send_addr=self.addr, recv_addr=addr, ttl=1))
+        self.tx_fifo.append(p.construct(aodvtype=AODVType.HELLO, send_addr=self.addr, recv_addr=addr, payload=h.pack(), ttl=1))
     
     def _recv_hello(self, p:Packet):
+        h = HELLO(p.payload)
         self.neighbors[p.send_addr] = Neighbor(rssi=p.rssi, snr=p.snr)
-        #TODO
+        self.routing_table.add_update(p.send_addr, p.send_addr, h.dest_seq, hops=1, seq_valid=True, lifetime=config.ACTIVE_ROUTE_TIMEOUT)
     
     def _recv_data(self, p:Packet):
         r = DATAGRAM(p.payload)
@@ -458,6 +464,9 @@ class Node:
         if p.recv_addr == self.addr:
             if r.dest_addr == self.addr:
                 self.log(f'got datagram from: {r.orig_addr}')
+                self.log(r.data)
+                if r.data == b'ping':
+                    self.send(r.orig_addr, 'pong')
             else:
                 route = self.routing_table[r.dest_addr]
                 if route and route.valid():
@@ -492,7 +501,7 @@ class Node:
             
         r.set_flags(join=False, repair=repair, gratuitous=gratuitous, dest_only=False, unknown=unknown)
         r.set_data(dest_addr, self.addr, dest_seq, self.seq_num, self.rreq_id)
-        self.tx_fifo.append(Packet().construct(AODVType.RREQ, self.addr, BROADCAST_ADDR, r.pack(), 255))
+        self.tx_fifo.append(Packet().construct(AODVType.RREQ, self.addr, BROADCAST_ADDR, r.pack(), config.NET_DIAMETER))
         self.log(f'sending rreq: {dest_addr}')
 
 if __name__ == '__main__':
