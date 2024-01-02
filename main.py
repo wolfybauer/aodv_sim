@@ -1,3 +1,4 @@
+import time
 from random import randbytes, randint, choice
 import logging as log
 
@@ -177,22 +178,22 @@ class NodeViewer(UIPanel):
                              plain_text_display_only=True)
         
     def format(self, aodv:AODVNode):
-        routes = {}
+        a2n = self.parent.addr2name
         out = f'NODE:{aodv.nickname}\nSEQ:{aodv.seq_num},RREQID:{aodv.rreq_id},'
+        out += '\n == ROUTES =='
+        out += f'\n{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFETIME"}'
+        t = int(time.time())
+        for k,v in aodv.routing_table.table.items():
+            out += f'\n{a2n[k]:<9}{a2n.get(v.next_hop, "???"):<9}{v.seq_num:<8}{v.hops:<5}{int(v.timestamp+v.lifetime-t)}'
+        return out
 
     def print_active(self):
         for n in self.nodes:
             # if n.nickname == self.settings.view_node:
             if n.nickname == self.settings.sender:
-                raw = n.aodv.__repr__()
-                for nn in self.nodes:
-                    raw = raw.replace(str(nn.addr), nn.nickname)
-                self.sender_box.set_text(raw)
+                self.sender_box.set_text(self.format(n.aodv))
             if n.nickname == self.settings.recver:
-                raw = n.aodv.__repr__()
-                for nn in self.nodes:
-                    raw = raw.replace(str(nn.addr), nn.nickname)
-                self.recver_box.set_text(raw)
+                self.recver_box.set_text(self.format(n.aodv))
     
     def update(self, time_delta: float):
         self.print_active()
@@ -222,7 +223,7 @@ class Controller(UIPanel):
             s = self.settings.recver
         for node in self.nodes:
             if node.nickname == s:
-                node.aodv.send(self.parent.name2addr(r), 'ping')
+                node.aodv.send(self.parent.name2addr[r], 'ping')
         log.info(f'{self.settings.sender}>>>{self.settings.recver}')
         return True
     
@@ -343,12 +344,6 @@ class Simulation:
 
         self.reset_nodes()
     
-    def name2addr(self, nickname):
-        for n in self.nodes:
-            if n.nickname == nickname:
-                return n.addr
-        return None
-    
     def randomize(self, side='left'):
         if side == 'left':
             old = self.settings.sender
@@ -390,6 +385,8 @@ class Simulation:
     
     # generate random nodes
     def reset_nodes(self):
+        self.name2addr = {}
+        self.addr2name = {}
         # clear old stuff
         self.nodes.empty()
         self.signals.empty()
@@ -398,8 +395,11 @@ class Simulation:
         for n in cfg.NODE_NAMES[:self.settings.num_nodes]:
             x = randint(cfg.SIM_X_MARGIN, cfg.SIM_WIDTH - cfg.SIM_X_MARGIN)
             y = randint(cfg.SIM_Y_MARGIN, cfg.SIM_HEIGHT - cfg.SIM_Y_MARGIN)
-            node = SimNode(self, randbytes(8), n, (x,y))
+            addr = randbytes(8)
+            node = SimNode(self, addr, n, (x,y))
             self.nodes.add(node)
+            self.name2addr[n] = addr
+            self.addr2name[addr] = n
 
     def run(self):
         while self.running:

@@ -160,7 +160,8 @@ class Node:
         self.tx_fifo = deque((), config.PACKET_OUTBOX_SZ)
 
         # queued outgoing messages
-        self.queued = []
+        self.tx_queued = []
+        self.rx_queued = deque((), config.PACKET_INBOX_SZ)
 
     
     # return nickname if exists, else addr string
@@ -182,6 +183,9 @@ class Node:
             log.debug(f'recv bad checksum, ignoring packet')
         except PacketBadLenError:
             log.debug(f'recv bad len, ignoring packet')
+        
+        if len(self.rx_queued):
+            return self.rx_queued.popleft()
     
     # MAIN UPDATE FUNCTION, call at regular interval
     # updates all internal states, handles inbox/outbox
@@ -220,17 +224,17 @@ class Node:
                 log.warning(f'unblacklisting: {n}')
         
         # update queued data
-        for i,d in enumerate(self.queued):
+        for i,d in enumerate(self.tx_queued):
             route = self.routing_table[d.dest_addr]
             if route and route.valid():
                 log.info(f'found route for queued: {d}')
-                dd = self.queued.pop(i)
+                dd = self.tx_queued.pop(i)
                 self._send_data(dd.dest_addr, dd.data)
             else:
-                self.queued[i].update()
-                if not self.queued[i].alive:
+                self.tx_queued[i].update()
+                if not self.tx_queued[i].alive:
                     log.warning(f'expired queued data: {d}')
-                    self.queued.pop(i)
+                    self.tx_queued.pop(i)
 
 
         # process next packet in inbox
@@ -263,7 +267,7 @@ class Node:
             # No valid route, initiate route discovery (RREQ)
             self._send_rreq(dest_addr)
             # queue data until route found
-            self.queued.append(QueuedData(dest_addr, data))
+            self.tx_queued.append(QueuedData(dest_addr, data))
         
     # only called when valid route exists
     # push packets into the tx fifo
@@ -464,6 +468,7 @@ class Node:
                 if r.data == b'ping':
                     log.info(f'sending pong:{r.orig_addr}')
                     self.send(r.orig_addr, 'pong')
+                self.rx_queued.append(r)
             else:
                 route = self.routing_table[r.dest_addr]
                 if route and route.valid():
