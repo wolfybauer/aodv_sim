@@ -92,6 +92,8 @@ class Transmission(pg.sprite.Sprite):
         pg.draw.circle(surface, self.color, self.position, self.radius, 1)
 
 class Settings:
+    def __getitem__(self, key):
+        return self.__dict__.get(key, None)
     def __init__(self):
         self.default()
     def default(self):
@@ -102,6 +104,39 @@ class Settings:
         self.recver = cfg.NODE_NAMES[1]
         self.range = cfg.DEFAULT_RANGE
         self.speed = cfg.DEFAULT_SPEED
+        self.view_node = self.sender
+
+class Slider(UIHorizontalSlider):
+    def __init__(self, parent, label, value_range, start_value, x, y):
+        r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
+        # super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H)),
+        super().__init__(relative_rect=r,
+                        value_range=value_range, start_value=start_value, manager=parent.manager, container=parent)
+        self.inner =  UILabel(relative_rect=r,
+                                text=str(start_value),
+                                manager=parent.manager,
+                                container=parent)
+        
+        self.outer = UILabel(relative_rect=pg.Rect((r.topright[0]-r.w*0.25,r[1]), (r.w, r.h)),
+                                text=str(label),
+                                manager=parent.manager,
+                                container=parent,)
+    def set_text(self, text):
+        self.inner.set_text(text)
+
+class Button(UIButton):
+    def __init__(self, parent, text, x, y):
+        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
+                        text=text,
+                        manager=parent.manager,
+                        container=parent)
+class Dropdown(UIDropDownMenu):
+    def __init__(self, parent, options_list, start_idx, x, y):
+        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
+                         options_list=options_list,
+                         starting_option=options_list[start_idx],
+                         manager=parent.manager,
+                         container=parent)
 
 class NodeViewer(UIPanel):
     def __init__(self, parent):
@@ -112,15 +147,18 @@ class NodeViewer(UIPanel):
         self.settings = parent.settings
         self.nodes = parent.nodes
         self.signals = parent.signals
-
-        self.active_node = None
         self.box = UITextBox(html_text='hello',
                              relative_rect=pg.Rect(0,0,cfg.VIEW_WIDTH,cfg.VIEW_HEIGHT),
                              manager=self.manager,
                              container=self,
                              plain_text_display_only=True)
-        print(self.rect)
-        
+    
+    def print_active(self):
+        for n in self.nodes:
+            # if n.nickname == self.settings.view_node:
+            if n.nickname == self.settings.sender:
+                self.box.set_text(n.aodv.__repr__())
+    
 
 class Controller(UIPanel):
     def __init__(self, parent):
@@ -160,6 +198,7 @@ class Controller(UIPanel):
             # reset button clicked
             if event.ui_element == self.default_button:
                 self.settings.default()
+                self.parent.reset_nodes()
                 self.remake()
                 self.refresh()
                 handled &= True
@@ -175,7 +214,11 @@ class Controller(UIPanel):
                     self.settings.direction = PING_REV
                 else:
                     self.settings.direction = PING_FWD
-                self.dir_label.set_text(self.settings.direction)
+                self.dir_button.set_text(self.settings.direction)
+                handled &= True
+            # view button
+            if event.ui_element == self.view_button:
+                self.parent.view.print_active()
                 handled &= True
         elif event.type == gui.UI_HORIZONTAL_SLIDER_MOVED:
             #TODO
@@ -195,82 +238,33 @@ class Controller(UIPanel):
             self.reset_button.kill()
             self.default_button.kill()
             self.dir_button.kill()
-            self.dir_label.kill()
+            self.view_button.kill()
             self.send_list.kill()
             self.recv_list.kill()
             self.num_nodes_slider.kill()
-            self.num_nodes_label.kill()
             self.range_slider.kill()
-            self.range_label.kill()
         except Exception as e:
             print(e)
 
-        self.ping_button = UIButton(relative_rect=pg.Rect((0,0),(cfg.BUTTON_W,cfg.BUTTON_H)),
-                                    text='ping',
-                                    manager=self.manager,
-                                    container=self)
-        # button to reset nodes
-        self.reset_button = UIButton(relative_rect=pg.Rect((cfg.BUTTON_W,0),(cfg.BUTTON_W,cfg.BUTTON_H)),
-                                    text='reset',
-                                    manager=self.manager,
-                                    container=self)
-        # button to reset nodes
-        self.default_button = UIButton(relative_rect=pg.Rect((cfg.BUTTON_W*2,cfg.BUTTON_H*2),(cfg.BUTTON_W,cfg.BUTTON_H)),
-                                    text='default',
-                                    manager=self.manager,
-                                    container=self)
-        # button to switch send direction
-        self.dir_button = UIButton(relative_rect=pg.Rect((0,cfg.BUTTON_H*2),(cfg.BUTTON_W,cfg.BUTTON_H)),
-                                                text='',
-                                                manager=self.manager,
-                                                container=self)
-        # direction button label
-        self.dir_label = UILabel(relative_rect=self.dir_button.relative_rect,
-                                 text=self.settings.direction,
-                                 manager=self.manager,
-                                 container=self)
-        # left node list
-        self.send_list = UIDropDownMenu(relative_rect=pg.Rect(0,cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H), 
-                                         options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
-                                         manager=self.manager,
-                                         container=self,
-                                         starting_option=cfg.NODE_NAMES[0])
-        # right node list
-        self.recv_list = UIDropDownMenu(relative_rect=pg.Rect(0,cfg.BUTTON_H*3,cfg.BUTTON_W,cfg.BUTTON_H),
-                                         options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
-                                         manager=self.manager,
-                                         container=self,
-                                         starting_option=cfg.NODE_NAMES[1])
-        # number of nodes slider
-        self.num_nodes_slider = UIHorizontalSlider(relative_rect=pg.Rect(cfg.BUTTON_W*2,0,cfg.SLIDER_W,cfg.SLIDER_H),
-                                                   value_range=(3,len(cfg.NODE_NAMES)),
-                                                   start_value=self.settings.num_nodes,
-                                                   manager=self.manager,
-                                                   container=self)
-        # num nodes label
-        self.num_nodes_label = UILabel(relative_rect=self.num_nodes_slider.relative_rect,
-                                 text=str(self.settings.num_nodes),
-                                 manager=self.manager,
-                                 container=self)
-        # signal radius slider
-        self.range_slider = UIHorizontalSlider(relative_rect=pg.Rect(cfg.BUTTON_W*2,cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H),
-                                                   value_range=(cfg.MIN_RANGE,cfg.MAX_RANGE),
-                                                   start_value=self.settings.range,
-                                                   manager=self.manager,
-                                                   container=self)
-        # signal radius label
-        self.range_label = UILabel(relative_rect=self.range_slider.relative_rect,
-                                 text=str(self.settings.range),
-                                 manager=self.manager,
-                                 container=self)
+        self.ping_button = Button(self, 'ping', 0, 0)
+        self.reset_button = Button(self, 'reset', 1, 0)
+        self.default_button = Button(self, 'default', 2, 0)
+        self.view_button = Button(self, 'view', 3, 0)
+
+        self.send_list = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], 0, 0, 1)
+        self.dir_button = Button(self, PING_FWD, 1, 1)
+        self.recv_list = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], 1, 2, 1)
+
+        self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, 6, 0)
+        self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, 6, 1)
     
     def refresh(self):
         self.settings.sender = self.send_list.selected_option
         self.settings.recver = self.recv_list.selected_option
         self.settings.num_nodes = self.num_nodes_slider.current_value
         self.settings.range = self.range_slider.current_value
-        self.num_nodes_label.set_text(str(self.settings.num_nodes))
-        self.range_label.set_text(str(self.settings.range))
+        self.num_nodes_slider.set_text(str(self.settings.num_nodes))
+        self.range_slider.set_text(str(self.settings.range))
 
 
 class Simulation:
@@ -349,6 +343,7 @@ class Simulation:
                     # default settings
                     if event.key == pg.K_d:
                         self.settings.default()
+                        self.reset_nodes()
                         self.ctl.remake()
                         self.ctl.refresh()
                     # reset
@@ -359,6 +354,9 @@ class Simulation:
                     # ping
                     if event.key == pg.K_p:
                         self.ctl.send_ping()
+                    # view
+                    if event.key == pg.K_v:
+                        self.view.print_active()
 
                 self.manager.process_events(event)
 

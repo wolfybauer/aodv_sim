@@ -127,12 +127,12 @@ class RoutingTable:
 
 class Node:
     def __repr__(self):
-        out = f'NODE:{self.addr}\nSEQ:{self.seq_num},RREQID:{self.rreq_id},'
+        out = f'NODE:[{self.nickname}]{self.addr}\nSEQ:{self.seq_num},RREQID:{self.rreq_id},'
         out += f'INBOX:{len(self.rx_fifo)},OUTBOX:{len(self.tx_fifo)}\n'
         out += ' == ROUTES == \n'
         out += self.routing_table.__repr__()
         out += '\n == RECENTS == \n'
-        out += '\n'.join(f" > {k}:{v}" for k, v in self.recent_rreqs.items())
+        out += '\n' + ','.join([str(r) for r in self.recent_rreqs])
         return out
     
     def __init__(self, node_addr:bytes, nickname:str=''):
