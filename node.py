@@ -287,12 +287,14 @@ class Node:
 
         # data fits in single packet
         if len(data) <= PAYLOAD_MAX_LEN:
+            self.seq_num += 1
             d.set_data(dest_addr=dest_addr, orig_addr=self.addr, orig_seq=self.seq_num, data=data)
             self.tx_fifo.append(p.construct(AODVType.DATA, self.addr, recv_addr, d.pack(), ttl))
         # data too big for one packet
         else:
             i = 0
             while i < len(data):
+                self.seq_num += 1
                 d.set_data(dest_addr=dest_addr, orig_addr=self.addr, orig_seq=self.seq_num, data=data[i:i+PAYLOAD_MAX_LEN])
                 self.tx_fifo.append(p.construct(AODVType.DATA, self.addr, recv_addr, d.pack(), ttl))
                 i += PAYLOAD_MAX_LEN
