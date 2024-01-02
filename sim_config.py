@@ -23,11 +23,13 @@ NODE_NAMES = ['john',
               'sigmund',
               'ralph']
 
-NUM_NODES = len(NODE_NAMES)
-
 # sim node constants
 DEFAULT_SPEED = 5
-DEFAULT_RANGE = 200
+DEFAULT_RANGE = 180
+MAX_RANGE = 400
+MIN_RANGE = 50
+MAX_SPEED = 20
+MIN_SPEED = 1
 SIM_X_MARGIN = 30
 SIM_Y_MARGIN = 30
 NODE_SPRITE_DIM = (20, 20)
@@ -56,10 +58,11 @@ DATA_COLOR = 'green'
 UNKNOWN_COLOR = 'white'
 
 # element dimensions
-NAME_DROPDOWN_DIM = (100, 30)
-SEND_BUTTON_DIM = (100, 30)
 BUTTON_W = 100
 BUTTON_H = 30
+
+SLIDER_W = int(BUTTON_W * 1.5)
+SLIDER_H = BUTTON_H
 
 # element positions
 SEND_DROPDOWN_POS = (0, 600)
