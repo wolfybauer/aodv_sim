@@ -21,7 +21,15 @@ NODE_NAMES = ['john',
               'antonio',
               'wolfgang',
               'sigmund',
-              'ralph']
+              'ralph',
+              'tiffany',
+              'alicia',
+              'naomi',
+              'penny',
+              'oliver',
+              'rakim',
+              'huey',
+              'malik']
 
 # sim node constants
 DEFAULT_SPEED = 5
@@ -46,7 +54,7 @@ BUTTON_H = GUI_HEIGHT//7
 
 GUI_HEIGHT = BUTTON_H*7
 SCREEN_HEIGHT = SIM_HEIGHT+GUI_HEIGHT
-SCREEN_WIDTH = SIM_WIDTH+VIEW_WIDTH
+SCREEN_WIDTH = SIM_WIDTH+VIEW_WIDTH*2
 VIEW_HEIGHT = SCREEN_HEIGHT
 
 # colors
@@ -66,6 +74,11 @@ UNKNOWN_COLOR = 'white'
 SLIDER_W = int(BUTTON_W * 1.25)
 SLIDER_H = BUTTON_H
 
+INFOBOX_W = VIEW_WIDTH
+INFOBOX_H = BUTTON_H * 2
+DATABOX_W = VIEW_WIDTH
+DATABOX_H = SCREEN_HEIGHT - INFOBOX_H - BUTTON_H
+
 # element positions
 SEND_DROPDOWN_POS = (0, 600)
 RECV_DROPDOWN_POS = (0, 630)
@@ -73,4 +86,5 @@ SEND_BUTTON_POS = (0, 660)
 
 SIM_DIM = (0, 0, SIM_WIDTH, SIM_HEIGHT)
 GUI_DIM = (0, SIM_HEIGHT, GUI_WIDTH, GUI_HEIGHT)
-VIEW_DIM = (SIM_WIDTH, 0, VIEW_WIDTH, VIEW_HEIGHT)
+VIEW_DIM = [(SIM_WIDTH, 0, VIEW_WIDTH, VIEW_HEIGHT),
+            (SIM_WIDTH+VIEW_WIDTH, 0, VIEW_WIDTH, VIEW_HEIGHT)]

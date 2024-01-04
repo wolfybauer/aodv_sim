@@ -21,8 +21,6 @@ log.basicConfig(level=20, format=log_fmt, datefmt=log_datefmt)
 # pg surface stuff
 pg.init()
 font = pg.font.Font(None, 24)
-# bg_sim = pg.Surface((cfg.SIM_WIDTH,cfg.SIM_HEIGHT))
-# bg_sim.fill(pg.Color(cfg.SIM_COLOR))
 
 # node class
 class SimNode(pg.sprite.Sprite):
@@ -37,6 +35,7 @@ class SimNode(pg.sprite.Sprite):
         self.image.fill(pg.Color(cfg.NODE_COLOR))
         self.rect = self.image.get_rect(center=position)
         self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.ADDR_COLOR))
+        self.inbox = []
     
     def emit_signal(self, payload=b'', color='red'):
         self.signals.add(Transmission(parent=self, payload=payload, color=color))
@@ -61,6 +60,10 @@ class SimNode(pg.sprite.Sprite):
             else:
                 return cfg.UNKNOWN_COLOR
             self.emit_signal(raw, c)
+        
+        rx = self.aodv.pop_rx()
+        if rx:
+            self.inbox.append(rx)
     
     def draw_address(self, screen):
         addr_pos = self.rect.x, self.rect.y - 25
@@ -92,6 +95,18 @@ class Transmission(pg.sprite.Sprite):
     def draw(self, surface):
         pg.draw.circle(surface, self.color, self.position, self.radius, 1)
 
+class Ping:
+    def __init__(self, addr, timeout_s = 3):
+        self.timestamp = time.time()
+        self.addr = addr
+        self.timeout = self.timestamp + timeout_s
+        self.success = False
+        self.expired = False
+    def update(self):
+        if not self.expired:
+            if time.time() > self.timeout:
+                self.expired = True
+    
 class Settings:
     def __getitem__(self, key):
         return self.__dict__.get(key, None)
@@ -105,7 +120,6 @@ class Settings:
         self.recver = cfg.NODE_NAMES[1]
         self.range = cfg.DEFAULT_RANGE
         self.speed = cfg.DEFAULT_SPEED
-        self.view_node = self.sender
 
 class Slider(UIHorizontalSlider):
     def __init__(self, parent, label, value_range, start_value, x, y):
@@ -158,46 +172,84 @@ class StatusBar(UIStatusBar):
         self.inner.set_text(text)
 
 class NodeViewer(UIPanel):
-    def __init__(self, parent):
-        super().__init__(pg.Rect(cfg.VIEW_DIM), manager=parent.manager)
+    def __init__(self, parent, which_node, x_pos):
+        super().__init__(pg.Rect(cfg.VIEW_DIM[x_pos]), manager=parent.manager)
 
         self.parent = parent
         self.manager = parent.manager
         self.settings = parent.settings
-        self.nodes = parent.nodes
-        self.signals = parent.signals
-        self.sender_box = UITextBox(html_text='',
-                             relative_rect=pg.Rect(0,0,cfg.VIEW_WIDTH,cfg.VIEW_HEIGHT),
-                             manager=self.manager,
-                             container=self,
-                             plain_text_display_only=True)
-        self.recver_box = UITextBox(html_text='',
-                             relative_rect=pg.Rect(0,cfg.VIEW_HEIGHT//2,cfg.VIEW_WIDTH,cfg.VIEW_HEIGHT//2),
-                             manager=self.manager,
-                             container=self,
-                             plain_text_display_only=True)
-        
-    def format(self, aodv:AODVNode):
-        a2n = self.parent.addr2name
-        out = f'NODE:{aodv.nickname}\nSEQ:{aodv.seq_num},RREQID:{aodv.rreq_id},'
-        out += '\n == ROUTES =='
-        out += f'\n{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFETIME"}'
-        t = int(time.time())
-        for k,v in aodv.routing_table.table.items():
-            out += f'\n{a2n[k]:<9}{a2n.get(v.next_hop, "???"):<9}{v.seq_num:<8}{v.hops:<5}{int(v.timestamp+v.lifetime-t)}'
-        return out
 
-    def print_active(self):
-        for n in self.nodes:
-            # if n.nickname == self.settings.view_node:
-            if n.nickname == self.settings.sender:
-                self.sender_box.set_text(self.format(n.aodv))
-            if n.nickname == self.settings.recver:
-                self.recver_box.set_text(self.format(n.aodv))
+        self.mode = 'routes'
+        self.active_node = lambda: self.parent.name2node[self.settings[which_node]]
+        self.routes_button = Button(self, 'routes', 0, 0)
+        self.inbox_button = Button(self, 'inbox', 1, 0)
+        self.stats_button = Button(self, 'stats', 2, 0)
+        self.info_box = UITextBox(html_text='',
+                             relative_rect=pg.Rect(0,cfg.BUTTON_H,cfg.INFOBOX_W,cfg.INFOBOX_H),
+                             manager=self.manager,
+                             container=self,
+                             plain_text_display_only=True)
+        self.data_box = UITextBox(html_text='',
+                             relative_rect=pg.Rect(0,cfg.BUTTON_H*3,cfg.VIEW_WIDTH,cfg.VIEW_HEIGHT),
+                             manager=self.manager,
+                             container=self,
+                             plain_text_display_only=True)
+    
+    def _print_info(self):
+        n = self.active_node()
+        out = f'NODE:{n.nickname}{f"|| {self.mode}":<6}'
+        out += f'\nSEQ:{n.aodv.seq_num:04},RREQID:{n.aodv.rreq_id:04}'
+        self.info_box.set_text(out)
+
+    def _print_routes(self):
+        a2n = self.parent.addr2name
+        n = self.active_node()
+        out = f'\n{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFE":<5}{"VALID"}'
+        for k,v in n.aodv.routing_table.items():
+            out += f'\n{a2n[k]:<9}{a2n.get(v.next_hop, "???"):<9}{v.seq_num:<8}{v.hops:<5}{v.remaining():<5}{v.valid()}'
+        self.data_box.set_text(out)
+        
+    def _print_inbox(self):
+        a2n = self.parent.addr2name
+        n = self.active_node()
+        out = ''
+        for m in n.inbox:
+            out += f'\n{a2n[m.orig_addr]}[{m.orig_seq:04}]:{m.data}'
+        self.data_box.set_text(out)
+        
+    def _print_stats(self):
+        out = ''
+        self.data_box.set_text(out)
     
     def update(self, time_delta: float):
-        self.print_active()
+        self._print_info()
+        if self.mode == 'routes':
+            self._print_routes()
+        elif self.mode == 'inbox':
+            self._print_inbox()
+        elif self.mode == 'stats':
+            self._print_stats()
         return super().update(time_delta)
+    
+    def process_event(self, event):
+        handled = super().process_event(event)
+
+        if event.type == gui.UI_BUTTON_PRESSED:
+
+            # routes
+            if event.ui_element == self.routes_button:
+                self.mode = 'routes'
+                handled &= True
+            # inbox
+            if event.ui_element == self.inbox_button:
+                self.mode = 'inbox'
+                handled &= True
+            # stats
+            if event.ui_element == self.stats_button:
+                self.mode = 'stats'
+                handled &= True
+        
+        return handled
     
 
 class Controller(UIPanel):
@@ -221,9 +273,8 @@ class Controller(UIPanel):
         else:
             r = self.settings.sender
             s = self.settings.recver
-        for node in self.nodes:
-            if node.nickname == s:
-                node.aodv.send(self.parent.name2addr[r], 'ping')
+        
+        self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
         log.info(f'{self.settings.sender}>>>{self.settings.recver}')
         return True
     
@@ -340,7 +391,8 @@ class Simulation:
         self.signals = pg.sprite.Group()
 
         self.ctl = Controller(self)
-        self.view = NodeViewer(self)
+        self.send_view = NodeViewer(self, 'sender', 0)
+        self.recv_view = NodeViewer(self, 'recver', 1)
 
         self.reset_nodes()
     
@@ -366,6 +418,12 @@ class Simulation:
         else:
             self.settings.direction = PING_FWD
         self.ctl.dir_button.set_text(self.settings.direction)
+    
+    def nicknamize(self, raw_str:str):
+        for a in [n.addr for n in self.nodes]:
+            if str(a) in raw_str:
+                raw_str = raw_str.replace(str(a), self.addr2name[a])
+        return raw_str
 
     def detect_collisions(self):
         for signal in self.signals:
@@ -387,6 +445,7 @@ class Simulation:
     def reset_nodes(self):
         self.name2addr = {}
         self.addr2name = {}
+        self.name2node = {}
         # clear old stuff
         self.nodes.empty()
         self.signals.empty()
@@ -400,6 +459,7 @@ class Simulation:
             self.nodes.add(node)
             self.name2addr[n] = addr
             self.addr2name[addr] = n
+            self.name2node[n] = node
 
     def run(self):
         while self.running:
