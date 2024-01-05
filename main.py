@@ -22,6 +22,9 @@ log.basicConfig(level=20, format=log_fmt, datefmt=log_datefmt)
 pg.init()
 font = pg.font.Font(None, 24)
 
+SIM_SENDER_CHANGED = pg.event.custom_type()
+SIM_RECVER_CHANGED = pg.event.custom_type()
+
 # node class
 class SimNode(pg.sprite.Sprite):
     def __init__(self, parent, addr, nickname, position):
@@ -80,12 +83,7 @@ class Transmission(pg.sprite.Sprite):
         self.range = parent.settings.range  # Adjust as needed
         self.radius = 1
         self.collided = []
-        try:
-            self.color = pg.Color(color)
-        except Exception as e:
-            print(e)
-            log.warning('ERROR setting default color: red')
-            self.color = pg.Color('red')
+        self.color = pg.Color(color)
 
     def update(self):
         self.radius += self.speed
@@ -178,8 +176,10 @@ class Dropdown(UIDropDownMenu):
                          starting_option=str(start_option),
                          manager=parent.manager,
                          container=parent)
+    
     def process_event(self, event: pg.Event) -> bool:
         if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
+            print(event)
 
             if event.ui_element == self:
                 self.settings.__setattr__(self.setting, self.selected_option)
@@ -213,6 +213,7 @@ class NodeViewer(UIPanel):
         self.parent = parent
         self.manager = parent.manager
         self.settings = parent.settings
+        self.which = which_node
 
         self.mode = 'routes'
         self.active_node = lambda: self.parent.name2node[self.settings[which_node]]
@@ -270,6 +271,14 @@ class NodeViewer(UIPanel):
             self._print_stats()
         return super().update(time_delta)
     
+    def refresh(self):
+        # event = pg.event.Event(pg.USEREVENT,
+        #                        {'user_type': gui.UI_DROP_DOWN_MENU_CHANGED,
+        #                         'ui_element':self.node_dropdown,
+        #                         'text':self.settings[self.which]})
+        # print(event)
+        # self.manager.process_events(event)
+        pass
 
 class Controller(UIPanel):
     def __init__(self, parent):
@@ -305,7 +314,6 @@ class Controller(UIPanel):
             s = self.settings.recver
         
         self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
-        log.info(f'{self.settings.sender}>>>{self.settings.recver}')
         return True
     
     def set_num_nodes(self, num_nodes):
@@ -342,6 +350,11 @@ class Simulation:
 
         self.reset_nodes()
     
+    # def _update_active_nodes(self):
+    #     data = {'user_type': gui.UI_BUTTON_PRESSED,
+    #             'ui_element': selection_list.item_list_container.elements[0]}
+    #     event = pg.event.Event(pg.USEREVENT, {})
+    
     def randomize(self, side='left'):
         if side == 'left' or side == 'both':
             old = self.settings.sender
@@ -349,6 +362,7 @@ class Simulation:
             while (self.settings.sender == self.settings.recver or
                    self.settings.sender == old):
                 self.settings.sender = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
+            self.send_view.refresh()
         
         if side == 'right' or side == 'both':
             old = self.settings.recver
@@ -356,6 +370,8 @@ class Simulation:
             while (self.settings.recver == self.settings.sender or
                    self.settings.recver == old):
                 self.settings.recver = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
+            self.recv_view.refresh()
+        
     
     def reverse_direction(self):
         if self.settings.direction == PING_FWD:
@@ -435,7 +451,6 @@ class Simulation:
                         self.randomize('left')
                     # randomize both
                     if event.key == pg.K_w:
-                        self.ctl.random_m_button.held = True
                         self.randomize('left')
                         self.randomize('right')
                     # randomize recver

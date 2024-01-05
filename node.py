@@ -134,6 +134,8 @@ class RoutingTable:
                 return False
         self.table[addr] = Route(next_hop=next_hop, seq_num=seq_num, hops=hops, seq_valid=seq_valid, lifetime=lifetime)
         return True
+    def precursors(self, neighbor_addr:bytes):
+        return [v.next_hop for k,v in self.table.items() if k == neighbor_addr]
 
 class Node:
     def __repr__(self):
@@ -212,9 +214,9 @@ class Node:
                 if self.neighbors[k].retries:
                     self._send_hello(k)
                 else:
-                    log.info(f'{self.whoami()}:expired neighbor: {k}')
                     rm.append(k)
         for k in rm:
+            log.info(f'{self.whoami()}:expired neighbor: {k}')
             del self.neighbors[k]
 
         # 6.5: update, purge expired recent rreqs
@@ -410,11 +412,14 @@ class Node:
                 self.tx_fifo.append(p.construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops+p.hops))
                 # 6.6.3 gratuitous rreps
                 if rreq.gratuitous:
-                    print('grat!')
+                    log.info(f'{self.whoami()}:send gratuitous rrep:{rreq.dest_addr}')
+                    # next hop is dest route next hop
+                    next_hop = route.next_hop
                     # must unicast rrep to dest
                     route = self.routing_table[rreq.orig_addr]
                     r.set_data(dest_addr=rreq.orig_addr, orig_addr=rreq.dest_addr, dest_seq=rreq.orig_seq, hop_count=route.hops, lifetime=route.remaining())
-                    self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops))
+                    # r.set_flags()
+                    self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, next_hop, r.pack(), ttl=route.hops))
 
             else:
                 self.routing_table.add_update(addr=rreq.dest_addr, next_hop=b'', seq_num=rreq.dest_seq, hops=0, seq_valid=False)
@@ -449,7 +454,7 @@ class Node:
             # get route back to origin
             route = self.routing_table[rrep.orig_addr]
             if route and route.valid() and p.recv_addr == self.addr:
-                log.info(f'{self.whoami()}:fwd rrep. ttl:{p.ttl}')
+                log.debug(f'{self.whoami()}:fwd rrep. dest:{rrep.dest_addr} ttl:{p.ttl}')
                 p.payload = rrep.pack()
                 p.payload_len = len(p.payload)
                 self._fwd_packet(p, route.next_hop)
@@ -457,6 +462,11 @@ class Node:
                 # log.warning('rrep fwd IGNORED')
                 #TODO ?
                 pass
+        
+        # 6.8 handling rrep ack
+        if rrep.req_ack:
+            #TODO
+            pass
 
     # what do on recv rerr
     def _recv_rerr(self, p:Packet):
@@ -482,12 +492,16 @@ class Node:
     
     def _recv_data(self, p:Packet):
         r = DATAGRAM(p.payload)
+
+        # update orig route everytime
+        self.routing_table.add_update(addr=r.orig_addr, next_hop=p.send_addr, seq_num=r.orig_seq, hops=p.hops, seq_valid=True)
+        
         # only unicast!
         if p.recv_addr == self.addr:
             if r.dest_addr == self.addr:
-                log.info(f'{self.whoami()}:got datagram:{r.data}')
+                log.info(f'{self.whoami()}:recv datagram:{r.data}')
                 if r.data == b'ping':
-                    log.info(f'{self.whoami()}:sending pong:{r.orig_addr}')
+                    log.info(f'{self.whoami()}:send pong:{r.orig_addr}')
                     self.send(r.orig_addr, 'pong')
                 self.rx_queued.append(r)
             elif r.dest_addr in self.neighbors.keys():
@@ -497,13 +511,14 @@ class Node:
                 if route and route.valid():
                     self._fwd_packet(p, route.next_hop)
                 else:
-                    log.warning(f'{self.whoami()}:ignoring unrouteable datagram {r.orig_addr}>>>{r.dest_addr}')
+                    log.warning(f'{self.whoami()}:ignore: unrouteable datagram {r.orig_addr}>>>{r.dest_addr}')
                     #TODO send rerr?
+                    self._send_rerr()
 
     # fwd packet, changing just send/recv and checksum
     def _fwd_packet(self, p:Packet, recv_addr:bytes=BROADCAST_ADDR):
         if p.ttl > 0:
-            log.debug(f'{self.whoami()}:forwarding: {p.send_addr}')
+            log.debug(f'{self.whoami()}:fwd: {p.send_addr}')
             p.send_addr = self.addr
             p.recv_addr = recv_addr
             self.tx_fifo.append(p.pack())
@@ -527,7 +542,11 @@ class Node:
         r.set_flags(join=False, repair=repair, gratuitous=gratuitous, dest_only=False, unknown=unknown)
         r.set_data(dest_addr, self.addr, dest_seq, self.seq_num, self.rreq_id)
         self.tx_fifo.append(Packet().construct(AODVType.RREQ, self.addr, BROADCAST_ADDR, r.pack(), config.NET_DIAMETER))
-        log.debug(f'{self.whoami()}:sending rreq: {dest_addr}')
+        log.debug(f'{self.whoami()}:send rreq: {dest_addr}')
+    
+    def _send_rerr(self, broken_neighbor_addr:bytes):
+        pre = self.routing_table.precursors(broken_neighbor_addr)
+        print(pre)
 
 if __name__ == '__main__':
     p = Packet()
