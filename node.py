@@ -288,8 +288,6 @@ class Node:
         
         d = DATAGRAM()
         p = Packet()
-
-        route = self.routing_table[dest_addr]
         
         # if dest is active neighbor, send directly
         if (dest_addr in self.neighbors.keys() and
@@ -376,7 +374,7 @@ class Node:
         if rreq.orig_addr == self.addr:
             return
         
-        # 6.5.4
+        # 6.5.4 cal origin route lifetime
         life = (2*config.NET_TRAVERSAL_TIME -
                 2 * p.hops * config.NODE_TRAVERSAL_TIME)
         
@@ -407,16 +405,15 @@ class Node:
             route = self.routing_table[rreq.dest_addr]
             if route and route.valid() and not rreq.dest_only:
                 r = RREP()
-                lifetime = route.remaining()
-                r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=route.seq_num, hop_count=route.hops+p.hops, lifetime=lifetime)
+                r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=route.seq_num, hop_count=route.hops+p.hops, lifetime=route.remaining())
                 # r.set_flags() #TODO ?
                 self.tx_fifo.append(p.construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops+p.hops))
                 # 6.6.3 gratuitous rreps
                 if rreq.gratuitous:
+                    print('grat!')
                     # must unicast rrep to dest
                     route = self.routing_table[rreq.orig_addr]
-                    ttl = route.hops
-                    r.set_data(dest_addr=rreq.dest_addr, orig_addr=rreq.orig_addr, dest_seq=rreq.orig_seq, hop_count=route.hops, lifetime=lifetime)
+                    r.set_data(dest_addr=rreq.orig_addr, orig_addr=rreq.dest_addr, dest_seq=rreq.orig_seq, hop_count=route.hops, lifetime=route.remaining())
                     self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops))
 
             else:
@@ -436,7 +433,7 @@ class Node:
             seq_num = 0
             is_neighbor = False
         
-        # add neighbor
+        # add neighbor route
         self.routing_table.add_update(addr=p.send_addr, next_hop=p.send_addr, seq_num=seq_num, hops=1, seq_valid=is_neighbor)
         
         # next increment hop count
@@ -444,7 +441,6 @@ class Node:
         
         # create route to dest if not exists
         self.routing_table.add_update(addr=rrep.dest_addr, next_hop=p.send_addr, seq_num=rrep.dest_seq, hops=rrep.hop_count, seq_valid=True, lifetime=rrep.lifetime)
-        # self.routing_table.add_update(addr=rrep.orig_addr, next_hop=b'', seq_num=0, hops=0, seq_valid=False, lifetime=rrep.lifetime)
         
         # forward if i am not dest
         if rrep.dest_addr != self.addr:
@@ -494,6 +490,8 @@ class Node:
                     log.info(f'{self.whoami()}:sending pong:{r.orig_addr}')
                     self.send(r.orig_addr, 'pong')
                 self.rx_queued.append(r)
+            elif r.dest_addr in self.neighbors.keys():
+                self._fwd_packet(p, r.dest_addr)
             else:
                 route = self.routing_table[r.dest_addr]
                 if route and route.valid():
