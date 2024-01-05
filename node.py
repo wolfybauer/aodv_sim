@@ -121,7 +121,7 @@ class RoutingTable:
     def update(self):
         for route in self.table.values():
             route.update()
-    def add_update(self, addr:bytes, next_hop:bytes=b'', seq_num=0, hops=0, seq_valid=0, lifetime=config.ACTIVE_ROUTE_TIMEOUT):
+    def add_update(self, addr:bytes, next_hop:bytes=b'', seq_num=0, hops=0, seq_valid=False, lifetime=config.ACTIVE_ROUTE_TIMEOUT):
         if addr == self.addr:
             return False
         old = self.table.get(addr)
@@ -351,7 +351,7 @@ class Node:
         # add route to neighbor
         self.routing_table.add_update(addr=p.send_addr, next_hop=p.send_addr,
                                         seq_num=0, hops=1,
-                                        seq_valid=True, lifetime=config.ACTIVE_ROUTE_TIMEOUT)
+                                        seq_valid=False, lifetime=config.ACTIVE_ROUTE_TIMEOUT)
     
     def _is_too_recent(self, rreq):
         # 6.5: ignore if in recent rreqs!!
@@ -420,7 +420,7 @@ class Node:
                     self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops))
 
             else:
-                self.routing_table.add_update(rreq.dest_addr, b'', rreq.dest_seq, 0, 1,)
+                self.routing_table.add_update(addr=rreq.dest_addr, next_hop=b'', seq_num=rreq.dest_seq, hops=0, seq_valid=False)
                 self._fwd_packet(p)
         
 

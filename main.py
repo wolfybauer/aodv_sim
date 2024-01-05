@@ -110,11 +110,14 @@ class Ping:
 class Settings:
     def __getitem__(self, key):
         return self.__dict__.get(key, None)
+    def __setitem__(self, key, val):
+        if key in self.__dict__.keys():
+            self.__setattr__(key, val)
     def __init__(self):
-        self.direction = PING_FWD
         self.default()
     def default(self):
         self.paused = False
+        self.direction = PING_FWD
         self.num_nodes = len(cfg.NODE_NAMES)
         self.sender = cfg.NODE_NAMES[0]
         self.recver = cfg.NODE_NAMES[1]
@@ -122,13 +125,14 @@ class Settings:
         self.speed = cfg.DEFAULT_SPEED
 
 class Slider(UIHorizontalSlider):
-    def __init__(self, parent, label, value_range, start_value, x, y):
+    def __init__(self, parent, label, value_range, start_val, callback, x, y):
+        self._update = lambda: self.inner.set_text(str(self.get_current_value()))
+        self._process = lambda: callback(self.get_current_value())
         r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
-        # super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H)),
         super().__init__(relative_rect=r,
-                        value_range=value_range, start_value=start_value, manager=parent.manager, container=parent)
+                        value_range=value_range, start_value=start_val, manager=parent.manager, container=parent)
         self.inner =  UILabel(relative_rect=r,
-                                text=str(start_value),
+                                text=str(start_val),
                                 manager=parent.manager,
                                 container=parent)
         
@@ -136,22 +140,51 @@ class Slider(UIHorizontalSlider):
                                 text=str(label),
                                 manager=parent.manager,
                                 container=parent,)
-    def set_text(self, text):
-        self.inner.set_text(text)
+    
+    def update(self, time_delta: float):
+        self._update()
+        return super().update(time_delta)
+    
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_HORIZONTAL_SLIDER_MOVED:
+            if event.ui_element == self:
+                self._process()
+                self._update()
+        return super().process_event(event)
+        
 
 class Button(UIButton):
-    def __init__(self, parent, text, x, y):
+    def __init__(self, parent, text, func, x, y):
+        self.func = func
         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
                         text=text,
                         manager=parent.manager,
                         container=parent)
+    
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_BUTTON_PRESSED:
+
+            if event.ui_element == self:
+                self.func()
+
+        return super().process_event(event)
+
 class Dropdown(UIDropDownMenu):
-    def __init__(self, parent, options_list, start_option, x, y):
+    def __init__(self, parent, options_list, start_option, setting, x, y):
+        self.settings = parent.settings
+        self.setting = setting
         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
                          options_list=options_list,
                          starting_option=str(start_option),
                          manager=parent.manager,
                          container=parent)
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
+
+            if event.ui_element == self:
+                self.settings.__setattr__(self.setting, self.selected_option)
+
+        return super().process_event(event)
 
 class StatusBar(UIStatusBar):
     def __init__(self, parent, label, x, y, percent_method=None):
@@ -168,8 +201,10 @@ class StatusBar(UIStatusBar):
                                 text=str(label),
                                 manager=parent.manager,
                                 container=parent,)
-    def set_text(self, text):
-        self.inner.set_text(text)
+    
+    def update(self, time_delta: float):
+        self.inner.set_text(str(self.percent_method()))
+        return super().update(time_delta)
 
 class NodeViewer(UIPanel):
     def __init__(self, parent, which_node, x_pos):
@@ -181,9 +216,10 @@ class NodeViewer(UIPanel):
 
         self.mode = 'routes'
         self.active_node = lambda: self.parent.name2node[self.settings[which_node]]
-        self.routes_button = Button(self, 'routes', 0, 0)
-        self.inbox_button = Button(self, 'inbox', 1, 0)
-        self.stats_button = Button(self, 'stats', 2, 0)
+        self.routes_button = Button(self, 'routes', lambda: self.set_mode('routes'), 0, 0)
+        self.inbox_button = Button(self, 'inbox', lambda: self.set_mode('inbox'), 1, 0)
+        self.stats_button = Button(self, 'stats', lambda: self.set_mode('stats'), 2, 0)
+        self.node_dropdown = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], cfg.NODE_NAMES[x_pos], which_node, 3, 0)
         self.info_box = UITextBox(html_text='',
                              relative_rect=pg.Rect(0,cfg.BUTTON_H,cfg.INFOBOX_W,cfg.INFOBOX_H),
                              manager=self.manager,
@@ -194,6 +230,9 @@ class NodeViewer(UIPanel):
                              manager=self.manager,
                              container=self,
                              plain_text_display_only=True)
+    
+    def set_mode(self, mode):
+        self.mode = mode
     
     def _print_info(self):
         n = self.active_node()
@@ -231,26 +270,6 @@ class NodeViewer(UIPanel):
             self._print_stats()
         return super().update(time_delta)
     
-    def process_event(self, event):
-        handled = super().process_event(event)
-
-        if event.type == gui.UI_BUTTON_PRESSED:
-
-            # routes
-            if event.ui_element == self.routes_button:
-                self.mode = 'routes'
-                handled &= True
-            # inbox
-            if event.ui_element == self.inbox_button:
-                self.mode = 'inbox'
-                handled &= True
-            # stats
-            if event.ui_element == self.stats_button:
-                self.mode = 'stats'
-                handled &= True
-        
-        return handled
-    
 
 class Controller(UIPanel):
     def __init__(self, parent):
@@ -262,9 +281,20 @@ class Controller(UIPanel):
         self.nodes = parent.nodes
         self.signals = parent.signals
 
-        self.remake()
-        self.refresh()
-        
+        self.dir_button = Button(self, self.settings.direction, self.parent.reverse_direction, 2, 2)
+
+        self.random_l_button = Button(self, 'left', lambda: self.parent.randomize('left'), 0, 0)
+        self.random_m_button = Button(self, 'both', lambda: self.parent.randomize('both'), 1, 0)
+        self.random_r_button = Button(self, 'random', lambda: self.parent.randomize('right'), 2, 0)
+
+        self.reset_button = Button(self, 'reset', self.parent.reset_nodes, 3, 0)
+        self.default_button = Button(self, 'default', lambda:self.parent.reset_nodes(True), 3, 1)
+        self.ping_button = Button(self, 'ping', self.send_ping, 4, 0)
+
+        self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
+        self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
+
+        self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)        
     
     def send_ping(self):
         if self.settings.direction == PING_FWD:
@@ -278,99 +308,15 @@ class Controller(UIPanel):
         log.info(f'{self.settings.sender}>>>{self.settings.recver}')
         return True
     
-    def process_event(self, event):
-        handled = super().process_event(event)
-
-        if event.type == gui.UI_BUTTON_PRESSED:
-
-            # ping button clicked
-            if event.ui_element == self.ping_button:
-                handled &= self.send_ping()
-            # reset button clicked
-            if event.ui_element == self.default_button:
-                self.settings.default()
-                self.parent.reset_nodes()
-                self.remake()
-                self.refresh()
-                handled &= True
-            # default button clicked
-            if event.ui_element == self.reset_button:
-                self.parent.reset_nodes()
-                self.remake()
-                self.refresh()
-                handled &= True
-            # direction button clicked
-            if event.ui_element == self.dir_button:
-                self.parent.reverse_direction()
-                handled &= True
-            # random sender button
-            if event.ui_element == self.random_l_button:
-                self.parent.randomize('left')
-                handled &= True
-            # random sender button
-            if event.ui_element == self.random_m_button:
-                self.parent.randomize('left')
-                self.parent.randomize('right')
-                handled &= True
-            # random recver button
-            if event.ui_element == self.random_r_button:
-                self.parent.randomize('right')
-                handled &= True
-        elif event.type == gui.UI_HORIZONTAL_SLIDER_MOVED:
-            #TODO
-            pass
-
-        return handled
+    def set_num_nodes(self, num_nodes):
+        self.settings.sender = cfg.NODE_NAMES[0]
+        self.settings.recver = cfg.NODE_NAMES[0]
+        self.settings.num_nodes = num_nodes
+        self.parent.reset_nodes()
 
     def update(self, time_delta):
         super().update(time_delta)
-        self.refresh()
-    
-    def remake(self):
-        # self.manager.clear_and_reset()
-        # button to send ping
-        try:
-            self.ping_button.kill()
-            self.reset_button.kill()
-            self.default_button.kill()
-            self.dir_button.kill()
-            self.random_l_button.kill()
-            self.random_m_button.kill()
-            self.random_r_button.kill()
-            self.send_list.kill()
-            self.recv_list.kill()
-            self.num_nodes_slider.kill()
-            self.range_slider.kill()
-            self.signals_status.kill()
-        except Exception as e:
-            # print(e)
-            pass
-
-        self.random_l_button = Button(self, 'random', 0, 0)
-        self.random_m_button = Button(self, 'both', 1, 0)
-        self.random_r_button = Button(self, 'random', 2, 0)
-
-        self.send_list = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], self.settings.sender, 0, 1)
-        self.dir_button = Button(self, PING_FWD, 1, 1)
-        self.recv_list = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], self.settings.recver, 2, 1)
-
-        self.reset_button = Button(self, 'reset', 3, 0)
-        self.default_button = Button(self, 'default', 3, 1)
-        self.ping_button = Button(self, 'ping', 4, 0)
-
-        self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, 6, 0)
-        self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, 6, 1)
-
-        self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)
-    
-    def refresh(self):
-        self.settings.sender = self.send_list.selected_option
-        self.settings.recver = self.recv_list.selected_option
-        self.settings.num_nodes = self.num_nodes_slider.current_value
-        self.settings.range = self.range_slider.current_value
-        self.num_nodes_slider.set_text(str(self.settings.num_nodes))
-        self.range_slider.set_text(str(self.settings.range))
-        self.signals_status.set_text(str(len(self.signals)))
+        self.dir_button.set_text(self.settings.direction)
 
 class Simulation:
     def __init__(self):
@@ -397,20 +343,19 @@ class Simulation:
         self.reset_nodes()
     
     def randomize(self, side='left'):
-        if side == 'left':
+        if side == 'left' or side == 'both':
             old = self.settings.sender
             self.settings.sender = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             while (self.settings.sender == self.settings.recver or
                    self.settings.sender == old):
                 self.settings.sender = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
-        else:
+        
+        if side == 'right' or side == 'both':
             old = self.settings.recver
             self.settings.recver = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             while (self.settings.recver == self.settings.sender or
                    self.settings.recver == old):
                 self.settings.recver = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
-        self.ctl.remake()
-        self.ctl.refresh()
     
     def reverse_direction(self):
         if self.settings.direction == PING_FWD:
@@ -418,12 +363,6 @@ class Simulation:
         else:
             self.settings.direction = PING_FWD
         self.ctl.dir_button.set_text(self.settings.direction)
-    
-    def nicknamize(self, raw_str:str):
-        for a in [n.addr for n in self.nodes]:
-            if str(a) in raw_str:
-                raw_str = raw_str.replace(str(a), self.addr2name[a])
-        return raw_str
 
     def detect_collisions(self):
         for signal in self.signals:
@@ -442,7 +381,9 @@ class Simulation:
                             node.aodv.on_recv(signal.payload)
     
     # generate random nodes
-    def reset_nodes(self):
+    def reset_nodes(self, default_settings=False):
+        if default_settings:
+            self.settings.default()
         self.name2addr = {}
         self.addr2name = {}
         self.name2node = {}
@@ -478,15 +419,11 @@ class Simulation:
                         self.running = False
                     # default settings
                     if event.key == pg.K_d:
-                        self.settings.default()
-                        self.reset_nodes()
-                        self.ctl.remake()
-                        self.ctl.refresh()
+                        # self.settings.default()
+                        self.reset_nodes(default_settings=True)
                     # reset
                     if event.key == pg.K_r:
                         self.reset_nodes()
-                        self.ctl.remake()
-                        self.ctl.refresh()
                     # ping
                     if event.key == pg.K_p:
                         self.ctl.send_ping()
