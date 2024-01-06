@@ -22,8 +22,6 @@ log.basicConfig(level=20, format=log_fmt, datefmt=log_datefmt)
 pg.init()
 font = pg.font.Font(None, 24)
 
-SIM_SENDER_CHANGED = pg.event.custom_type()
-SIM_RECVER_CHANGED = pg.event.custom_type()
 
 # node class
 class SimNode(pg.sprite.Sprite):
@@ -37,40 +35,59 @@ class SimNode(pg.sprite.Sprite):
         self.image = pg.Surface(cfg.NODE_SPRITE_DIM)
         self.image.fill(pg.Color(cfg.NODE_COLOR))
         self.rect = self.image.get_rect(center=position)
-        self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.ADDR_COLOR))
+        self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.NODE_COLOR))
         self.inbox = []
+        self.online = True
     
     def emit_signal(self, payload=b'', color='red'):
         self.signals.add(Transmission(parent=self, payload=payload, color=color))
     
-    def update(self):
-        raw = self.aodv.update()
+    def update(self, events=[]):
 
-        # get signal type for color
-        if raw:
-            if len(raw) < 24:
-                c = cfg.UNKNOWN_COLOR
-            elif raw[16] == AODVType.RREQ: # rreq
-                c = cfg.RREQ_COLOR
-            elif raw[16] == AODVType.RREP: # rrep
-                c = cfg.RREP_COLOR
-            elif raw[16] == AODVType.RERR: # rerr
-                c = cfg.RERR_COLOR
-            elif raw[16] == AODVType.HELLO: # hello
-                c = cfg.HELLO_COLOR
-            elif raw[16] == AODVType.DATA: # data
-                c = cfg.DATA_COLOR
-            else:
-                return cfg.UNKNOWN_COLOR
-            self.emit_signal(raw, c)
-        
-        rx = self.aodv.pop_rx()
-        if rx:
-            self.inbox.append(rx)
+        # if click on node
+        for event in events:
+            if event.type == pg.MOUSEBUTTONDOWN and self.rect.collidepoint(event.pos):
+                self.toggle_online()
+
+        # update aodv if node online
+        if self.online:
+            raw = self.aodv.update()
+
+            # get signal type for color
+            if raw:
+                if len(raw) < 24:
+                    c = cfg.UNKNOWN_COLOR
+                elif raw[16] == AODVType.RREQ: # rreq
+                    c = cfg.RREQ_COLOR
+                elif raw[16] == AODVType.RREP: # rrep
+                    c = cfg.RREP_COLOR
+                elif raw[16] == AODVType.RERR: # rerr
+                    c = cfg.RERR_COLOR
+                elif raw[16] == AODVType.HELLO: # hello
+                    c = cfg.HELLO_COLOR
+                elif raw[16] == AODVType.DATA: # data
+                    c = cfg.DATA_COLOR
+                else:
+                    return cfg.UNKNOWN_COLOR
+                self.emit_signal(raw, c)
+            
+            rx = self.aodv.pop_rx()
+            if rx:
+                self.inbox.append(rx)
     
     def draw_address(self, screen):
         addr_pos = self.rect.x, self.rect.y - 25
         screen.blit(self.addr_surf, addr_pos)
+    
+    def toggle_online(self):
+        self.online = not self.online
+        if self.online:
+            self.image.fill(pg.Color(cfg.NODE_COLOR))
+            self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.NODE_COLOR))
+        else:
+            self.image.fill(pg.Color(cfg.OFFLINE_COLOR))
+            self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.OFFLINE_COLOR))
+    
         
 # signal class
 class Transmission(pg.sprite.Sprite):
@@ -93,6 +110,7 @@ class Transmission(pg.sprite.Sprite):
     def draw(self, surface):
         pg.draw.circle(surface, self.color, self.position, self.radius, 1)
 
+#TODO
 class Ping:
     def __init__(self, addr, timeout_s = 3):
         self.timestamp = time.time()
@@ -152,8 +170,11 @@ class Slider(UIHorizontalSlider):
         
 
 class Button(UIButton):
-    def __init__(self, parent, text, func, x, y):
-        self.func = func
+    def __init__(self, parent, text, funcs, x, y):
+        if not isinstance(funcs, list):
+            self.func_list = [funcs]
+        else:
+            self.func_list = funcs
         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
                         text=text,
                         manager=parent.manager,
@@ -163,14 +184,33 @@ class Button(UIButton):
         if event.type == gui.UI_BUTTON_PRESSED:
 
             if event.ui_element == self:
-                self.func()
+                for func in self.func_list:
+                    func()
 
         return super().process_event(event)
 
+# class Dropdown(UIDropDownMenu):
+#     def __init__(self, parent, options_list, start_option, setting, x, y):
+#         self.settings = parent.settings
+#         self.setting = setting
+#         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
+#                          options_list=options_list,
+#                          starting_option=str(start_option),
+#                          manager=parent.manager,
+#                          container=parent)
+    
+#     def process_event(self, event: pg.Event) -> bool:
+#         if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
+#             print(event)
+
+#             if event.ui_element == self:
+#                 self.settings.__setattr__(self.setting, self.selected_option)
+
+#         return super().process_event(event)
+
 class Dropdown(UIDropDownMenu):
-    def __init__(self, parent, options_list, start_option, setting, x, y):
-        self.settings = parent.settings
-        self.setting = setting
+    def __init__(self, parent, options_list, start_option, callback, x, y):
+        self.callback = callback
         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
                          options_list=options_list,
                          starting_option=str(start_option),
@@ -182,7 +222,7 @@ class Dropdown(UIDropDownMenu):
             print(event)
 
             if event.ui_element == self:
-                self.settings.__setattr__(self.setting, self.selected_option)
+                self.callback(self.selected_option)
 
         return super().process_event(event)
 
@@ -214,13 +254,18 @@ class NodeViewer(UIPanel):
         self.manager = parent.manager
         self.settings = parent.settings
         self.which = which_node
+        self.x_pos = x_pos
 
         self.mode = 'routes'
         self.active_node = lambda: self.parent.name2node[self.settings[which_node]]
-        self.routes_button = Button(self, 'routes', lambda: self.set_mode('routes'), 0, 0)
-        self.inbox_button = Button(self, 'inbox', lambda: self.set_mode('inbox'), 1, 0)
-        self.stats_button = Button(self, 'stats', lambda: self.set_mode('stats'), 2, 0)
-        self.node_dropdown = Dropdown(self, cfg.NODE_NAMES[:self.settings.num_nodes], cfg.NODE_NAMES[x_pos], which_node, 3, 0)
+
+        # buttons
+        # self.routes_button = Button(self, 'routes', lambda: self.set_mode('routes'), 0, 0)
+        # self.inbox_button = Button(self, 'inbox', lambda: self.set_mode('inbox'), 1, 0)
+        self.random_button = Button(self, 'random', lambda: self.parent.randomize(self.which), 2, 0)
+        self.online_button = Button(self, 'online', lambda: self.active_node().toggle_online(), 3, 0)
+        
+        # main view boxes
         self.info_box = UITextBox(html_text='',
                              relative_rect=pg.Rect(0,cfg.BUTTON_H,cfg.INFOBOX_W,cfg.INFOBOX_H),
                              manager=self.manager,
@@ -231,9 +276,28 @@ class NodeViewer(UIPanel):
                              manager=self.manager,
                              container=self,
                              plain_text_display_only=True)
+
+        self.refresh()
+
     
     def set_mode(self, mode):
         self.mode = mode
+    
+    # rebuild all dropdowns
+    def refresh(self):
+        try:
+            self.node_dropdown.kill()
+            self.mode_dropdown.kill()
+        except:
+            pass
+        self.node_dropdown = Dropdown(self, options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
+                                      start_option=self.settings[self.which],
+                                      callback=lambda s: self.settings.__setattr__(self.which, s),
+                                      x=0, y=0)
+        self.mode_dropdown = Dropdown(self, options_list=['routes', 'neighbors', 'inbox', 'stats'],
+                                      start_option=self.mode,
+                                      callback=self.set_mode,
+                                      x=1, y=0)
     
     def _print_info(self):
         n = self.active_node()
@@ -258,27 +322,30 @@ class NodeViewer(UIPanel):
         self.data_box.set_text(out)
         
     def _print_stats(self):
-        out = ''
+        out = 'todo: stats'
+        self.data_box.set_text(out)
+    
+    def _print_neighbors(self):
+        out = 'todo: neighbors'
         self.data_box.set_text(out)
     
     def update(self, time_delta: float):
+        # update button text
+        if self.active_node().online:
+            self.online_button.set_text('online')
+        else:
+            self.online_button.set_text('offline')
+
         self._print_info()
         if self.mode == 'routes':
             self._print_routes()
+        elif self.mode == 'neighbors':
+            self._print_neighbors()
         elif self.mode == 'inbox':
             self._print_inbox()
         elif self.mode == 'stats':
             self._print_stats()
         return super().update(time_delta)
-    
-    def refresh(self):
-        # event = pg.event.Event(pg.USEREVENT,
-        #                        {'user_type': gui.UI_DROP_DOWN_MENU_CHANGED,
-        #                         'ui_element':self.node_dropdown,
-        #                         'text':self.settings[self.which]})
-        # print(event)
-        # self.manager.process_events(event)
-        pass
 
 class Controller(UIPanel):
     def __init__(self, parent):
@@ -306,13 +373,8 @@ class Controller(UIPanel):
         self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)        
     
     def send_ping(self):
-        if self.settings.direction == PING_FWD:
-            s = self.settings.sender
-            r = self.settings.recver
-        else:
-            r = self.settings.sender
-            s = self.settings.recver
-        
+        s = self.settings.sender
+        r = self.settings.recver        
         self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
         return True
     
@@ -356,7 +418,7 @@ class Simulation:
     #     event = pg.event.Event(pg.USEREVENT, {})
     
     def randomize(self, side='left'):
-        if side == 'left' or side == 'both':
+        if side in ['left', 'send', 'sender', 'both']:
             old = self.settings.sender
             self.settings.sender = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             while (self.settings.sender == self.settings.recver or
@@ -364,7 +426,7 @@ class Simulation:
                 self.settings.sender = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             self.send_view.refresh()
         
-        if side == 'right' or side == 'both':
+        if side in ['right', 'recv', 'recver', 'both']:
             old = self.settings.recver
             self.settings.recver = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             while (self.settings.recver == self.settings.sender or
@@ -378,6 +440,11 @@ class Simulation:
             self.settings.direction = PING_REV
         else:
             self.settings.direction = PING_FWD
+        tmp = self.settings.sender
+        self.settings.sender = self.settings.recver
+        self.settings.recver = tmp
+        self.send_view.refresh()
+        self.recv_view.refresh()
         self.ctl.dir_button.set_text(self.settings.direction)
 
     def detect_collisions(self):
@@ -391,7 +458,7 @@ class Simulation:
                     distance = node_center.distance_to(signal_center)
 
                     # colliding = distance < signal.radius
-                    if distance < signal.radius:
+                    if node.online and distance < signal.radius:
                         if not node.addr in signal.collided:
                             signal.collided.append(node.addr)
                             node.aodv.on_recv(signal.payload)
@@ -424,7 +491,8 @@ class Simulation:
             dt = self.clock.tick(cfg.FPS) / 1000.0
 
             # event loops
-            for event in pg.event.get():
+            events = pg.event.get()
+            for event in events:
                 if event.type == pg.QUIT:
                     self.running = False
 
@@ -463,7 +531,7 @@ class Simulation:
                 # logical stuff
                 self.manager.update(dt)
                 self.signals.update()
-                self.nodes.update()
+                self.nodes.update(events)
                 self.detect_collisions()
 
                 # graphical stuff

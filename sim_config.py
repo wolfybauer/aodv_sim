@@ -61,13 +61,13 @@ VIEW_HEIGHT = SCREEN_HEIGHT
 SIM_COLOR = 'black'
 GUI_COLOR = 'pink'
 NODE_COLOR =  'white'
-ADDR_COLOR = 'white'
 RREQ_COLOR = 'purple'
 RREP_COLOR = 'blue'
 RERR_COLOR = 'red'
 HELLO_COLOR = 'yellow'
 DATA_COLOR = 'green'
 UNKNOWN_COLOR = 'white'
+OFFLINE_COLOR = 'red'
 
 
 # element dimensions

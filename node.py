@@ -42,11 +42,10 @@ class Expirable:
     def update(self):
         if time.time() >= self.timestamp + self.lifetime:
             self.alive = False
-    def reset(self, lifetime:int=None):
-        if not isinstance(lifetime, int): raise ValueError
-        if lifetime:
-            self.lifetime = lifetime
+    def reset(self, lifetime):
+        self.lifetime = lifetime
         self.timestamp = time.time()
+        self.alive = True
     def remaining(self):
         if self.alive:
             return int(self.timestamp + self.lifetime - time.time())
@@ -96,12 +95,11 @@ class Route(Expirable):
 # aka "precursors"
 # track all adjacent nodes, use for next hop unicast if 
 class Neighbor(Expirable):
-    def __init__(self, rssi:int=0, snr:int=0, retries=config.NEIGHBOR_MAX_REPAIRS):
+    def __init__(self, rssi:int=0, snr:int=0):
         super().__init__(config.ACTIVE_ROUTE_TIMEOUT)
         self.rssi = rssi
         self.snr = snr
-        self.retries = retries
-
+        self.retries = config.NEIGHBOR_MAX_REPAIRS
 # routing table structure
 class RoutingTable:
     def __repr__(self):
@@ -212,6 +210,7 @@ class Node:
             self.neighbors[k].update()
             if not self.neighbors[k].alive:
                 if self.neighbors[k].retries:
+
                     self._send_hello(k)
                 else:
                     rm.append(k)
