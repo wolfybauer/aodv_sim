@@ -189,25 +189,6 @@ class Button(UIButton):
 
         return super().process_event(event)
 
-# class Dropdown(UIDropDownMenu):
-#     def __init__(self, parent, options_list, start_option, setting, x, y):
-#         self.settings = parent.settings
-#         self.setting = setting
-#         super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
-#                          options_list=options_list,
-#                          starting_option=str(start_option),
-#                          manager=parent.manager,
-#                          container=parent)
-    
-#     def process_event(self, event: pg.Event) -> bool:
-#         if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
-#             print(event)
-
-#             if event.ui_element == self:
-#                 self.settings.__setattr__(self.setting, self.selected_option)
-
-#         return super().process_event(event)
-
 class Dropdown(UIDropDownMenu):
     def __init__(self, parent, options_list, start_option, callback, x, y):
         self.callback = callback
@@ -219,7 +200,6 @@ class Dropdown(UIDropDownMenu):
     
     def process_event(self, event: pg.Event) -> bool:
         if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
-            print(event)
 
             if event.ui_element == self:
                 self.callback(self.selected_option)
@@ -288,8 +268,8 @@ class NodeViewer(UIPanel):
         try:
             self.node_dropdown.kill()
             self.mode_dropdown.kill()
-        except:
-            pass
+        except Exception as e:
+            log.debug(f'SIM:{e}')
         self.node_dropdown = Dropdown(self, options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
                                       start_option=self.settings[self.which],
                                       callback=lambda s: self.settings.__setattr__(self.which, s),
@@ -357,20 +337,13 @@ class Controller(UIPanel):
         self.nodes = parent.nodes
         self.signals = parent.signals
 
-        self.dir_button = Button(self, self.settings.direction, self.parent.reverse_direction, 2, 2)
+        self.ping_button = Button(self, 'ping', self.send_ping, 0, 0)
+        self.reset_button = Button(self, 'reset', self.parent.reset_nodes, 0, 1)
+        self.default_button = Button(self, 'default', lambda:self.parent.reset_nodes(default_settings=True), 0, 2)
 
-        self.random_l_button = Button(self, 'left', lambda: self.parent.randomize('left'), 0, 0)
-        self.random_m_button = Button(self, 'both', lambda: self.parent.randomize('both'), 1, 0)
-        self.random_r_button = Button(self, 'random', lambda: self.parent.randomize('right'), 2, 0)
+        self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)   
 
-        self.reset_button = Button(self, 'reset', self.parent.reset_nodes, 3, 0)
-        self.default_button = Button(self, 'default', lambda:self.parent.reset_nodes(True), 3, 1)
-        self.ping_button = Button(self, 'ping', self.send_ping, 4, 0)
-
-        self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
-        self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
-
-        self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)        
+        self.refresh()     
     
     def send_ping(self):
         s = self.settings.sender
@@ -383,10 +356,15 @@ class Controller(UIPanel):
         self.settings.recver = cfg.NODE_NAMES[0]
         self.settings.num_nodes = num_nodes
         self.parent.reset_nodes()
-
-    def update(self, time_delta):
-        super().update(time_delta)
-        self.dir_button.set_text(self.settings.direction)
+    
+    def refresh(self):
+        try:
+            self.range_slider.kill()
+            self.num_nodes_slider.kill()
+        except Exception as e:
+            log.debug(f'SIM:{e}')
+        self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
+        self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
 
 class Simulation:
     def __init__(self):
@@ -436,16 +414,11 @@ class Simulation:
         
     
     def reverse_direction(self):
-        if self.settings.direction == PING_FWD:
-            self.settings.direction = PING_REV
-        else:
-            self.settings.direction = PING_FWD
         tmp = self.settings.sender
         self.settings.sender = self.settings.recver
         self.settings.recver = tmp
         self.send_view.refresh()
         self.recv_view.refresh()
-        self.ctl.dir_button.set_text(self.settings.direction)
 
     def detect_collisions(self):
         for signal in self.signals:
@@ -467,6 +440,7 @@ class Simulation:
     def reset_nodes(self, default_settings=False):
         if default_settings:
             self.settings.default()
+            self.ctl.refresh()
         self.name2addr = {}
         self.addr2name = {}
         self.name2node = {}
@@ -501,6 +475,9 @@ class Simulation:
                     # esc
                     if event.key == pg.K_ESCAPE:
                         self.running = False
+                    # pause
+                    if event.key == pg.K_SPACE:
+                        self.settings.paused = not self.settings.paused
                     # default settings
                     if event.key == pg.K_d:
                         # self.settings.default()
@@ -524,12 +501,21 @@ class Simulation:
                     # randomize recver
                     if event.key == pg.K_e:
                         self.randomize('right')
+                    # toggle sender online
+                    if event.key == pg.K_z:
+                        self.name2node[self.settings.sender].toggle_online()
+                    # toggle recver online
+                    if event.key == pg.K_x:
+                        self.name2node[self.settings.recver].toggle_online()
 
                 self.manager.process_events(event)
+            
+            # update gui
+            self.manager.update(dt)
+            
 
             if not self.settings.paused:
                 # logical stuff
-                self.manager.update(dt)
                 self.signals.update()
                 self.nodes.update(events)
                 self.detect_collisions()
@@ -542,9 +528,11 @@ class Simulation:
                     s.draw(self.sim_surf)
                 for n in self.nodes:
                     n.draw_address(self.screen)
-                self.manager.draw_ui(self.screen)
+            
+            # draw gui
+            self.manager.draw_ui(self.screen)
                 
-                pg.display.update()
+            pg.display.update()
 
 if __name__ == '__main__':
     sim = Simulation()

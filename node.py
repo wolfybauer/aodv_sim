@@ -382,6 +382,7 @@ class Node:
         route = self.routing_table[rreq.orig_addr]
         if route:
             life = max(life, route.lifetime)
+            # log.warning(f'NEW LIFE:{life},OLD LIFE:{route.lifetime}')
         
         # add route to origin
         self.routing_table.add_update(addr=rreq.orig_addr, next_hop=p.send_addr,
@@ -421,7 +422,7 @@ class Node:
                     self.tx_fifo.append(Packet().construct(AODVType.RREP, self.addr, next_hop, r.pack(), ttl=route.hops))
 
             else:
-                self.routing_table.add_update(addr=rreq.dest_addr, next_hop=b'', seq_num=rreq.dest_seq, hops=0, seq_valid=False)
+                self.routing_table.add_update(addr=rreq.dest_addr, next_hop=b'', seq_num=rreq.dest_seq, hops=0, seq_valid=False, lifetime=config.INACTIVE_ROUTE_TIMEOUT)
                 self._fwd_packet(p)
         
 
