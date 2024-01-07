@@ -4,9 +4,9 @@
 
 ## description
 
-- AODV routing simulation with [pygame](https://www.pygame.org) and [pygame_gui](https://pygame-gui.readthedocs.io/en/latest/quick_start.html).
+- AODV(ish) routing simulation with [pygame](https://www.pygame.org) and [pygame_gui](https://pygame-gui.readthedocs.io/en/latest/quick_start.html).
 - planning to implement IRL in micropython eventually, so limited python featureset
-- wip, protocol not quite done/working yet
+- work in progress
 
 ## instructions
 
@@ -18,6 +18,17 @@ or use a venv, or whatever.
 
 ### run
 - `python3 main.py`
-- use gui to send data
-- click node to see its contents
-- press 'r' to reset random node positions
+- use gui
+- click on a node to toggle on/offline status
+- keyboard commands:
+  - exit : `esc`
+  - pause : `space`
+  - ping : `p`
+  - reset nodes (keep current settings) : `r`
+  - reset nodes (restore default settings) : `d`
+  - swap sender / receiver : `s`
+  - randomize sender : `q`
+  - randomize receiver : `e`
+  - randomize both : `w`
+  - toggle sender online : `z`
+  - toggle receiver online : `x`
