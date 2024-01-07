@@ -32,3 +32,7 @@ or use a venv, or whatever.
   - randomize both : `w`
   - toggle sender online : `z`
   - toggle receiver online : `x`
+  - view mode: routes : `1`
+  - view mode: neighbors : `2`
+  - view mode: inbox : `3`
+  - view mode: log : `4`

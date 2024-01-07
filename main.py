@@ -1,6 +1,6 @@
 import time
 from random import randbytes, randint, choice
-import logging as log
+import logging
 
 from node import Node as AODVNode
 from packet import AODVType
@@ -10,18 +10,30 @@ import pygame as pg
 import pygame_gui as gui
 from pygame_gui.elements import UIButton, UILabel, UIPanel, UIDropDownMenu, UITextBox, UIHorizontalSlider, UIStatusBar
 
-PING_FWD = '>>>>>>>>'
-PING_REV = '<<<<<<<<'
 
 # set up logger
-log_fmt = '%(asctime)s:%(levelname)s:%(message)s'
-log_datefmt = "%H:%M:%S"
-log.basicConfig(level=20, format=log_fmt, datefmt=log_datefmt)
+# log_fmt = '%(asctime)s:%(levelname)s:%(message)s'
+# log_datefmt = "%H:%M:%S"
+
+LOG_FMT = logging.Formatter(fmt='%(asctime)s:%(levelname)s:%(message)s', datefmt="%H:%M:%S")
+logging.basicConfig(level=20, format='%(asctime)s:%(levelname)s:%(message)s', datefmt="%H:%M:%S")
 
 # pg surface stuff
 pg.init()
 font = pg.font.Font(None, 24)
 
+class NodeLogStream:
+    def __repr__(self) -> str:
+        return self.text
+    def __init__(self):
+        self.text = ''
+    def write(self, text):
+        self.text += text
+    def read(self):
+        return self.text
+    def flush(self):
+        # self.text = ''
+        pass
 
 # node class
 class SimNode(pg.sprite.Sprite):
@@ -31,7 +43,15 @@ class SimNode(pg.sprite.Sprite):
         self.settings = parent.settings
         self.addr = addr
         self.nickname = nickname
-        self.aodv = AODVNode(node_addr=self.addr, nickname=nickname)
+        self.stream = NodeLogStream()
+        handle = logging.StreamHandler()
+        handle.setFormatter(fmt=LOG_FMT)
+        handle.setStream(self.stream)
+        handle.setLevel(10)
+        self.log = logging.getLogger(self.nickname)
+        self.log.addHandler(handle)
+        self.log.propagate = False
+        self.aodv = AODVNode(node_addr=self.addr, nickname=nickname, logger=self.log)
         self.image = pg.Surface(cfg.NODE_SPRITE_DIM)
         self.image.fill(pg.Color(cfg.NODE_COLOR))
         self.rect = self.image.get_rect(center=position)
@@ -133,7 +153,6 @@ class Settings:
         self.default()
     def default(self):
         self.paused = False
-        self.direction = PING_FWD
         self.num_nodes = len(cfg.NODE_NAMES)
         self.sender = cfg.NODE_NAMES[0]
         self.recver = cfg.NODE_NAMES[1]
@@ -226,6 +245,7 @@ class StatusBar(UIStatusBar):
         self.inner.set_text(str(self.percent_method()))
         return super().update(time_delta)
 
+
 class NodeViewer(UIPanel):
     def __init__(self, parent, which_node, x_pos):
         super().__init__(pg.Rect(cfg.VIEW_DIM[x_pos]), manager=parent.manager)
@@ -240,8 +260,6 @@ class NodeViewer(UIPanel):
         self.active_node = lambda: self.parent.name2node[self.settings[which_node]]
 
         # buttons
-        # self.routes_button = Button(self, 'routes', lambda: self.set_mode('routes'), 0, 0)
-        # self.inbox_button = Button(self, 'inbox', lambda: self.set_mode('inbox'), 1, 0)
         self.random_button = Button(self, 'random', lambda: self.parent.randomize(self.which), 2, 0)
         self.online_button = Button(self, 'online', lambda: self.active_node().toggle_online(), 3, 0)
         
@@ -258,10 +276,6 @@ class NodeViewer(UIPanel):
                              plain_text_display_only=True)
 
         self.refresh()
-
-    
-    def set_mode(self, mode):
-        self.mode = mode
     
     # rebuild all dropdowns
     def refresh(self):
@@ -269,14 +283,14 @@ class NodeViewer(UIPanel):
             self.node_dropdown.kill()
             self.mode_dropdown.kill()
         except Exception as e:
-            log.debug(f'SIM:{e}')
+            logging.debug(f'{e}')
         self.node_dropdown = Dropdown(self, options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
                                       start_option=self.settings[self.which],
                                       callback=lambda s: self.settings.__setattr__(self.which, s),
                                       x=0, y=0)
-        self.mode_dropdown = Dropdown(self, options_list=['routes', 'neighbors', 'inbox', 'stats'],
+        self.mode_dropdown = Dropdown(self, options_list=['routes', 'neighbors', 'inbox', 'log'],
                                       start_option=self.mode,
-                                      callback=self.set_mode,
+                                      callback=lambda m: self.__setattr__('mode', m),
                                       x=1, y=0)
     
     def _print_info(self):
@@ -288,7 +302,7 @@ class NodeViewer(UIPanel):
     def _print_routes(self):
         a2n = self.parent.addr2name
         n = self.active_node()
-        out = f'\n{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFE":<5}{"VALID"}'
+        out = f'{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFE":<5}{"VALID"}'
         for k,v in n.aodv.routing_table.items():
             out += f'\n{a2n[k]:<9}{a2n.get(v.next_hop, "???"):<9}{v.seq_num:<8}{v.hops:<5}{v.remaining():<5}{v.valid()}'
         self.data_box.set_text(out)
@@ -301,8 +315,8 @@ class NodeViewer(UIPanel):
             out += f'\n{a2n[m.orig_addr]}[{m.orig_seq:04}]:{m.data}'
         self.data_box.set_text(out)
         
-    def _print_stats(self):
-        out = 'todo: stats'
+    def _print_log(self):
+        out = self.active_node().stream.read()
         self.data_box.set_text(out)
     
     def _print_neighbors(self):
@@ -323,8 +337,8 @@ class NodeViewer(UIPanel):
             self._print_neighbors()
         elif self.mode == 'inbox':
             self._print_inbox()
-        elif self.mode == 'stats':
-            self._print_stats()
+        elif self.mode == 'log':
+            self._print_log()
         return super().update(time_delta)
 
 class Controller(UIPanel):
@@ -362,7 +376,7 @@ class Controller(UIPanel):
             self.range_slider.kill()
             self.num_nodes_slider.kill()
         except Exception as e:
-            log.debug(f'SIM:{e}')
+            logging.debug(f'{e}')
         self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
         self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
 
@@ -507,6 +521,31 @@ class Simulation:
                     # toggle recver online
                     if event.key == pg.K_x:
                         self.name2node[self.settings.recver].toggle_online()
+                    # view mode: routes
+                    if event.key == pg.K_1:
+                        self.send_view.mode = 'routes'
+                        self.recv_view.mode = 'routes'
+                        self.send_view.refresh()
+                        self.recv_view.refresh()
+                    # view mode: neighbors
+                    if event.key == pg.K_2:
+                        self.send_view.mode = 'neighbors'
+                        self.recv_view.mode = 'neighbors'
+                        self.send_view.refresh()
+                        self.recv_view.refresh()
+                    # view mode: routes
+                    if event.key == pg.K_3:
+                        self.send_view.mode = 'inbox'
+                        self.recv_view.mode = 'inbox'
+                        self.send_view.refresh()
+                        self.recv_view.refresh()
+                    # view mode: routes
+                    if event.key == pg.K_4:
+                        self.send_view.mode = 'log'
+                        self.recv_view.mode = 'log'
+                        self.send_view.refresh()
+                        self.recv_view.refresh()
+                    
 
                 self.manager.process_events(event)
             

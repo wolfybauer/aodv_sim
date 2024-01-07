@@ -6,9 +6,9 @@ import node_config as config
 from packet import *
 
 try:
-    import logging as log
+    import logging
 except:
-    import ulogging as log
+    import ulogging as logging
 
 # util: unsigned increment
 def uincr(x, y=1):
@@ -145,10 +145,11 @@ class Node:
         out += '\n' + ','.join([str(r) for r in self.recent_rreqs])
         return out
     
-    def __init__(self, node_addr:bytes, nickname:str=''):
+    def __init__(self, node_addr:bytes, nickname:str='', logger=None):
 
         self.addr = conform_address(node_addr)
         self.nickname = nickname
+        self.log = logger if logger else logging
 
         self.seq_num = 0
         self.rreq_id = 0
@@ -193,11 +194,11 @@ class Node:
         try:
             p = Packet(raw, rssi, snr)
             self.rx_fifo.append(p)
-            log.debug(f'{self.whoami()}:recv packet: {p.send_addr}')
+            self.log.debug(f'recv packet: {p.send_addr}')
         except PacketBadCrcError:
-            log.debug(f'{self.whoami()}:recv bad checksum, ignoring packet')
+            self.log.debug(f'recv bad checksum, ignoring packet')
         except PacketBadLenError:
-            log.debug(f'{self.whoami()}:recv bad len, ignoring packet')
+            self.log.debug(f'recv bad len, ignoring packet')
     
     # MAIN UPDATE FUNCTION, call at regular interval
     # updates all internal states, handles inbox/outbox
@@ -215,7 +216,7 @@ class Node:
                 else:
                     rm.append(k)
         for k in rm:
-            log.info(f'{self.whoami()}:expired neighbor: {k}')
+            self.log.info(f'expired neighbor: {k}')
             del self.neighbors[k]
 
         # 6.5: update, purge expired recent rreqs
@@ -223,7 +224,7 @@ class Node:
             self.recent_rreqs[i].update()
             if not self.recent_rreqs[i].alive:
                 r = self.recent_rreqs.pop(i)
-                log.debug(f'{self.whoami()}:rm recent rreq: {r}')
+                self.log.debug(f'rm recent rreq: {r}')
                 
 
         # count down route lifetimes
@@ -234,19 +235,19 @@ class Node:
             self.blacklist[i].update()
             if not self.blacklist[i].alive:
                 n = self.blacklist.pop(i)
-                log.warning(f'{self.whoami()}:unblacklisting: {n}')
+                self.log.warning(f'unblacklisting: {n}')
         
         # update queued data
         for i,d in enumerate(self.tx_queued):
             route = self.routing_table[d.dest_addr]
             if route and route.valid():
-                log.info(f'{self.whoami()}:found route for queued: {d}')
+                self.log.info(f'found route for queued: {d}')
                 dd = self.tx_queued.pop(i)
                 self._send_data(dd.dest_addr, dd.data)
             else:
                 self.tx_queued[i].update()
                 if not self.tx_queued[i].alive:
-                    log.warning(f'{self.whoami()}:expired queued data: {d}')
+                    self.log.warning(f'expired queued data: {d}')
                     self.tx_queued.pop(i)
 
 
@@ -263,7 +264,7 @@ class Node:
     # user should only ever use this to send stuff
     # protocol should handle all route maintenance etc
     def send(self, dest_addr:bytes, data:str):
-        
+
         # if active neighbor, send immediately
         neighbor = self.neighbors.get(dest_addr)
         if neighbor and neighbor.alive:
@@ -343,8 +344,8 @@ class Node:
         elif p.aodvtype == AODVType.HELLO:
             self._recv_hello(p)
         else:
-            # log.warning('recv unrecognized aodv packet')
-            log.warning('recv unrecognized aodv packet')
+            # self.log.warning('recv unrecognized aodv packet')
+            self.log.warning('recv unrecognized aodv packet')
             return
         
         # add route to neighbor
@@ -356,11 +357,11 @@ class Node:
         # 6.5: ignore if in recent rreqs!!
         # first find orig_addr in recent_rreq keys
         if rreq in self.recent_rreqs:
-            log.debug(f'{self.whoami()}:ignoring duplicate rreq: {rreq.orig_addr}')
+            self.log.debug(f'ignoring duplicate rreq: {rreq.orig_addr}')
             return True
         else:
             self.recent_rreqs.append(RecentRREQ(rreq))
-            log.debug(f'{self.whoami()}:added recent rreq: {rreq.orig_addr}')
+            self.log.debug(f'added recent rreq: {rreq.orig_addr}')
             return False
     
     # what do on recv rreq
@@ -382,7 +383,7 @@ class Node:
         route = self.routing_table[rreq.orig_addr]
         if route:
             life = max(life, route.lifetime)
-            # log.warning(f'NEW LIFE:{life},OLD LIFE:{route.lifetime}')
+            # self.log.warning(f'NEW LIFE:{life},OLD LIFE:{route.lifetime}')
         
         # add route to origin
         self.routing_table.add_update(addr=rreq.orig_addr, next_hop=p.send_addr,
@@ -412,7 +413,7 @@ class Node:
                 self.tx_fifo.append(p.construct(AODVType.RREP, self.addr, p.send_addr, r.pack(), ttl=route.hops+p.hops))
                 # 6.6.3 gratuitous rreps
                 if rreq.gratuitous:
-                    log.info(f'{self.whoami()}:send gratuitous rrep:{rreq.dest_addr}')
+                    self.log.info(f'send gratuitous rrep:{rreq.dest_addr}')
                     # next hop is dest route next hop
                     next_hop = route.next_hop
                     # must unicast rrep to dest
@@ -454,12 +455,12 @@ class Node:
             # get route back to origin
             route = self.routing_table[rrep.orig_addr]
             if route and route.valid() and p.recv_addr == self.addr:
-                log.debug(f'{self.whoami()}:fwd rrep. dest:{rrep.dest_addr} ttl:{p.ttl}')
+                self.log.debug(f'fwd rrep. dest:{rrep.dest_addr} ttl:{p.ttl}')
                 p.payload = rrep.pack()
                 p.payload_len = len(p.payload)
                 self._fwd_packet(p, route.next_hop)
             else:
-                # log.warning('rrep fwd IGNORED')
+                # self.log.warning('rrep fwd IGNORED')
                 #TODO ?
                 pass
         
@@ -499,9 +500,9 @@ class Node:
         # only unicast!
         if p.recv_addr == self.addr:
             if r.dest_addr == self.addr:
-                log.info(f'{self.whoami()}:recv datagram:{r.data}')
+                self.log.info(f'recv datagram:{r.data}')
                 if r.data == b'ping':
-                    log.info(f'{self.whoami()}:send pong:{r.orig_addr}')
+                    self.log.info(f'send pong:{r.orig_addr}')
                     self.send(r.orig_addr, 'pong')
                 self.rx_queued.append(r)
             elif r.dest_addr in self.neighbors.keys():
@@ -511,14 +512,14 @@ class Node:
                 if route and route.valid():
                     self._fwd_packet(p, route.next_hop)
                 else:
-                    log.warning(f'{self.whoami()}:ignore: unrouteable datagram {r.orig_addr}>>>{r.dest_addr}')
+                    self.log.warning(f'ignore: unrouteable datagram {r.orig_addr}>>>{r.dest_addr}')
                     #TODO send rerr?
                     self._send_rerr()
 
     # fwd packet, changing just send/recv and checksum
     def _fwd_packet(self, p:Packet, recv_addr:bytes=BROADCAST_ADDR):
         if p.ttl > 0:
-            log.debug(f'{self.whoami()}:fwd: {p.send_addr}')
+            self.log.debug(f'fwd: {p.send_addr}')
             p.send_addr = self.addr
             p.recv_addr = recv_addr
             self.tx_fifo.append(p.pack())
@@ -542,7 +543,7 @@ class Node:
         r.set_flags(join=False, repair=repair, gratuitous=gratuitous, dest_only=False, unknown=unknown)
         r.set_data(dest_addr, self.addr, dest_seq, self.seq_num, self.rreq_id)
         self.tx_fifo.append(Packet().construct(AODVType.RREQ, self.addr, BROADCAST_ADDR, r.pack(), config.NET_DIAMETER))
-        log.debug(f'{self.whoami()}:send rreq: {dest_addr}')
+        self.log.debug(f'send rreq: {dest_addr}')
     
     def _send_rerr(self, broken_neighbor_addr:bytes):
         pre = self.routing_table.precursors(broken_neighbor_addr)
