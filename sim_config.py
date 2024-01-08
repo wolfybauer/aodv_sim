@@ -31,6 +31,17 @@ NODE_NAMES = ['john',
               'huey',
               'malik']
 
+LOGLEVEL2NAME = { 10 : 'DEBUG',
+                  20 : 'INFO',
+                  30 : 'WARNING',
+                  40 : 'ERROR',
+                  50 : 'CRITICAL'}
+LOGNAME2LEVEL = { 'DEBUG' : 10,
+                  'INFO' : 20,
+                  'WARNING' : 30,
+                  'ERROR' : 40,
+                  'CRITICAL' : 50}
+
 # sim node constants
 DEFAULT_SPEED = 5
 DEFAULT_RANGE = 180

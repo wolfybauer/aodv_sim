@@ -1,4 +1,5 @@
 import time
+
 from random import randbytes, randint, choice
 import logging
 
@@ -16,24 +17,166 @@ from pygame_gui.elements import UIButton, UILabel, UIPanel, UIDropDownMenu, UITe
 # log_datefmt = "%H:%M:%S"
 
 LOG_FMT = logging.Formatter(fmt='%(asctime)s:%(levelname)s:%(message)s', datefmt="%H:%M:%S")
-logging.basicConfig(level=20, format='%(asctime)s:%(levelname)s:%(message)s', datefmt="%H:%M:%S")
+logging.basicConfig(level=10, format='%(asctime)s:%(levelname)s:%(message)s', datefmt="%H:%M:%S")
 
 # pg surface stuff
 pg.init()
 font = pg.font.Font(None, 24)
 
-class NodeLogStream:
-    def __repr__(self) -> str:
-        return self.text
+
+# slider wrapper
+class Slider(UIHorizontalSlider):
+    def __init__(self, parent, label, value_range, start_val, callback, x, y):
+        self._update = lambda: self.inner.set_text(str(self.get_current_value()))
+        self._process = lambda: callback(self.get_current_value())
+        r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
+        super().__init__(relative_rect=r,
+                        value_range=value_range, start_value=start_val, manager=parent.manager, container=parent)
+        self.inner =  UILabel(relative_rect=r,
+                                text=str(start_val),
+                                manager=parent.manager,
+                                container=parent)
+        
+        self.outer = UILabel(relative_rect=pg.Rect((r.topright[0]-r.w*0.25,r[1]), (r.w, r.h)),
+                                text=str(label),
+                                manager=parent.manager,
+                                container=parent,)
+    
+    def update(self, time_delta: float):
+        self._update()
+        return super().update(time_delta)
+    
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_HORIZONTAL_SLIDER_MOVED:
+            if event.ui_element == self:
+                self._process()
+                self._update()
+        return super().process_event(event)
+        
+# button wrapper
+class Button(UIButton):
+    def __init__(self, parent, text, funcs, x, y):
+        if not isinstance(funcs, list):
+            self.func_list = [funcs]
+        else:
+            self.func_list = funcs
+        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
+                        text=text,
+                        manager=parent.manager,
+                        container=parent)
+    
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_BUTTON_PRESSED:
+
+            if event.ui_element == self:
+                for func in self.func_list:
+                    func()
+
+        return super().process_event(event)
+
+# dropdown wrapper
+class Dropdown(UIDropDownMenu):
+    def __init__(self, parent, options_list, start_option, callback, x, y):
+        self.callback = callback
+        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
+                         options_list=options_list,
+                         starting_option=str(start_option),
+                         manager=parent.manager,
+                         container=parent)
+    
+    def process_event(self, event: pg.Event) -> bool:
+        if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
+
+            if event.ui_element == self:
+                self.callback(self.selected_option)
+
+        return super().process_event(event)
+
+# status bar wrapper
+class StatusBar(UIStatusBar):
+    def __init__(self, parent, label, x, y, percent_method=None):
+        r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
+        super().__init__(relative_rect=r,
+                         percent_method=percent_method,
+                         manager=parent.manager,
+                         container=parent)
+        self.inner =  UILabel(relative_rect=r,
+                                text='',
+                                manager=parent.manager,
+                                container=parent)
+        self.outer = UILabel(relative_rect=pg.Rect((r.topright[0]-r.w*0.25,r[1]), (r.w, r.h)),
+                                text=str(label),
+                                manager=parent.manager,
+                                container=parent,)
+    
+    def update(self, time_delta: float):
+        self.inner.set_text(str(self.percent_method()))
+        return super().update(time_delta)
+
+
+#TODO
+class Ping:
+    def __init__(self, addr, timeout_s = 3):
+        self.timestamp = time.time()
+        self.addr = addr
+        self.timeout = self.timestamp + timeout_s
+        self.success = False
+        self.expired = False
+    def update(self):
+        if not self.expired:
+            if time.time() > self.timeout:
+                self.expired = True
+
+# global settings
+class Settings:
+    def __getitem__(self, key):
+        return self.__dict__.get(key, None)
+    def __setitem__(self, key, val):
+        if key in self.__dict__.keys():
+            self.__setattr__(key, val)
     def __init__(self):
-        self.text = ''
-    def write(self, text):
-        self.text += text
+        self.default()
+    def default(self):
+        self.paused = False
+        self.num_nodes = len(cfg.NODE_NAMES)
+        self.sender = cfg.NODE_NAMES[0]
+        self.recver = cfg.NODE_NAMES[1]
+        self.range = cfg.DEFAULT_RANGE
+        self.speed = cfg.DEFAULT_SPEED
+        self.log_level = 'DEBUG'
+
+class NodeLogger:
+    class LogEntry:
+        def __repr__(self) -> str:
+            return f'{self.t}:{cfg.LOGLEVEL2NAME[self.l]}:{self.m}'
+        def __init__(self, level, msg) -> None:
+            self.t = time.strftime("%H:%M:%S")
+            self.l = level
+            self.m = msg
+    def __init__(self, level=cfg.LOGNAME2LEVEL['INFO'], max_lines=20) -> None:
+        self.queue = []
+        self.max_lines = max_lines
+        self.level = level
+        self.ready = False
+    def _enque(self, msg, level):
+        self.queue.append(self.LogEntry(level, msg))
+        while len(self.queue) > self.max_lines:
+            self.queue.pop(0)
+        self.ready = True
+    def debug(self, msg):
+        self._enque(msg, cfg.LOGNAME2LEVEL['DEBUG'])
+    def info(self, msg):
+        self._enque(msg, cfg.LOGNAME2LEVEL['INFO'])
+    def warning(self, msg):
+        self._enque(msg, cfg.LOGNAME2LEVEL['WARNING'])
+    def error(self, msg):
+        self._enque(msg, cfg.LOGNAME2LEVEL['ERROR'])
+    def critical(self, msg):
+        self._enque(msg, cfg.LOGNAME2LEVEL['CRITICAL'])
+    
     def read(self):
-        return self.text
-    def flush(self):
-        # self.text = ''
-        pass
+        self.ready = False
+        return '\n'.join([str(q) for q in self.queue if q.l >= self.level()])
 
 # node class
 class SimNode(pg.sprite.Sprite):
@@ -43,14 +186,7 @@ class SimNode(pg.sprite.Sprite):
         self.settings = parent.settings
         self.addr = addr
         self.nickname = nickname
-        self.stream = NodeLogStream()
-        handle = logging.StreamHandler()
-        handle.setFormatter(fmt=LOG_FMT)
-        handle.setStream(self.stream)
-        handle.setLevel(10)
-        self.log = logging.getLogger(self.nickname)
-        self.log.addHandler(handle)
-        self.log.propagate = False
+        self.log = NodeLogger(level=lambda:cfg.LOGNAME2LEVEL.get(self.settings.__getitem__('log_level')))
         self.aodv = AODVNode(node_addr=self.addr, nickname=nickname, logger=self.log)
         self.image = pg.Surface(cfg.NODE_SPRITE_DIM)
         self.image.fill(pg.Color(cfg.NODE_COLOR))
@@ -70,7 +206,7 @@ class SimNode(pg.sprite.Sprite):
                 self.toggle_online()
 
         # update aodv if node online
-        if self.online:
+        if self.online and not self.settings.paused:
             raw = self.aodv.update()
 
             # get signal type for color
@@ -130,122 +266,7 @@ class Transmission(pg.sprite.Sprite):
     def draw(self, surface):
         pg.draw.circle(surface, self.color, self.position, self.radius, 1)
 
-#TODO
-class Ping:
-    def __init__(self, addr, timeout_s = 3):
-        self.timestamp = time.time()
-        self.addr = addr
-        self.timeout = self.timestamp + timeout_s
-        self.success = False
-        self.expired = False
-    def update(self):
-        if not self.expired:
-            if time.time() > self.timeout:
-                self.expired = True
-    
-class Settings:
-    def __getitem__(self, key):
-        return self.__dict__.get(key, None)
-    def __setitem__(self, key, val):
-        if key in self.__dict__.keys():
-            self.__setattr__(key, val)
-    def __init__(self):
-        self.default()
-    def default(self):
-        self.paused = False
-        self.num_nodes = len(cfg.NODE_NAMES)
-        self.sender = cfg.NODE_NAMES[0]
-        self.recver = cfg.NODE_NAMES[1]
-        self.range = cfg.DEFAULT_RANGE
-        self.speed = cfg.DEFAULT_SPEED
-
-class Slider(UIHorizontalSlider):
-    def __init__(self, parent, label, value_range, start_val, callback, x, y):
-        self._update = lambda: self.inner.set_text(str(self.get_current_value()))
-        self._process = lambda: callback(self.get_current_value())
-        r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
-        super().__init__(relative_rect=r,
-                        value_range=value_range, start_value=start_val, manager=parent.manager, container=parent)
-        self.inner =  UILabel(relative_rect=r,
-                                text=str(start_val),
-                                manager=parent.manager,
-                                container=parent)
-        
-        self.outer = UILabel(relative_rect=pg.Rect((r.topright[0]-r.w*0.25,r[1]), (r.w, r.h)),
-                                text=str(label),
-                                manager=parent.manager,
-                                container=parent,)
-    
-    def update(self, time_delta: float):
-        self._update()
-        return super().update(time_delta)
-    
-    def process_event(self, event: pg.Event) -> bool:
-        if event.type == gui.UI_HORIZONTAL_SLIDER_MOVED:
-            if event.ui_element == self:
-                self._process()
-                self._update()
-        return super().process_event(event)
-        
-
-class Button(UIButton):
-    def __init__(self, parent, text, funcs, x, y):
-        if not isinstance(funcs, list):
-            self.func_list = [funcs]
-        else:
-            self.func_list = funcs
-        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
-                        text=text,
-                        manager=parent.manager,
-                        container=parent)
-    
-    def process_event(self, event: pg.Event) -> bool:
-        if event.type == gui.UI_BUTTON_PRESSED:
-
-            if event.ui_element == self:
-                for func in self.func_list:
-                    func()
-
-        return super().process_event(event)
-
-class Dropdown(UIDropDownMenu):
-    def __init__(self, parent, options_list, start_option, callback, x, y):
-        self.callback = callback
-        super().__init__(relative_rect=pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.BUTTON_W,cfg.BUTTON_H)),
-                         options_list=options_list,
-                         starting_option=str(start_option),
-                         manager=parent.manager,
-                         container=parent)
-    
-    def process_event(self, event: pg.Event) -> bool:
-        if event.type == gui.UI_DROP_DOWN_MENU_CHANGED:
-
-            if event.ui_element == self:
-                self.callback(self.selected_option)
-
-        return super().process_event(event)
-
-class StatusBar(UIStatusBar):
-    def __init__(self, parent, label, x, y, percent_method=None):
-        r = pg.Rect((x*cfg.BUTTON_W,y*cfg.BUTTON_H,cfg.SLIDER_W,cfg.SLIDER_H))
-        super().__init__(relative_rect=r,
-                         percent_method=percent_method,
-                         manager=parent.manager,
-                         container=parent)
-        self.inner =  UILabel(relative_rect=r,
-                                text='',
-                                manager=parent.manager,
-                                container=parent)
-        self.outer = UILabel(relative_rect=pg.Rect((r.topright[0]-r.w*0.25,r[1]), (r.w, r.h)),
-                                text=str(label),
-                                manager=parent.manager,
-                                container=parent,)
-    
-    def update(self, time_delta: float):
-        self.inner.set_text(str(self.percent_method()))
-        return super().update(time_delta)
-
-
+# view node internal states
 class NodeViewer(UIPanel):
     def __init__(self, parent, which_node, x_pos):
         super().__init__(pg.Rect(cfg.VIEW_DIM[x_pos]), manager=parent.manager)
@@ -282,6 +303,7 @@ class NodeViewer(UIPanel):
         try:
             self.node_dropdown.kill()
             self.mode_dropdown.kill()
+            self.active_node().log.ready = True
         except Exception as e:
             logging.debug(f'{e}')
         self.node_dropdown = Dropdown(self, options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
@@ -291,7 +313,11 @@ class NodeViewer(UIPanel):
         self.mode_dropdown = Dropdown(self, options_list=['routes', 'neighbors', 'inbox', 'log'],
                                       start_option=self.mode,
                                       callback=lambda m: self.__setattr__('mode', m),
-                                      x=1, y=0)
+                                      x=1, y=0)        
+    
+    def set_mode(self, mode:str):
+        self.mode = mode
+        self.refresh()
     
     def _print_info(self):
         n = self.active_node()
@@ -310,17 +336,24 @@ class NodeViewer(UIPanel):
     def _print_inbox(self):
         a2n = self.parent.addr2name
         n = self.active_node()
-        out = ''
+        out = f'{"ADDR":<9}{"SEQ":<5}{"DATA"}'
         for m in n.inbox:
-            out += f'\n{a2n[m.orig_addr]}[{m.orig_seq:04}]:{m.data}'
+            out += f'\n{a2n[m.orig_addr]:<9}{f"{m.orig_seq:04}":<5}{m.data.decode("ascii")}'
         self.data_box.set_text(out)
         
     def _print_log(self):
-        out = self.active_node().stream.read()
-        self.data_box.set_text(out)
+        if self.active_node().log.ready:
+            out = self.active_node().log.read()
+            for k,v in self.parent.addr2name.items():
+                out = out.replace(str(k), v)
+            self.data_box.set_text(out)
     
     def _print_neighbors(self):
-        out = 'todo: neighbors'
+        a2n = self.parent.addr2name
+        n = self.active_node().aodv
+        out = f'{"ADDR":<9}{"RSSI":<5}{"SNR":<5}{"RETRY":<6}{"LIFE"}'  
+        for k,v in n.neighbors.items():
+            out += f'\n{a2n[k]:<9}{v.rssi:<5}{v.snr:<5}{v.retries:<6}{v.remaining()}'
         self.data_box.set_text(out)
     
     def update(self, time_delta: float):
@@ -351,9 +384,14 @@ class Controller(UIPanel):
         self.nodes = parent.nodes
         self.signals = parent.signals
 
+        # col 0
         self.ping_button = Button(self, 'ping', self.send_ping, 0, 0)
-        self.reset_button = Button(self, 'reset', self.parent.reset_nodes, 0, 1)
-        self.default_button = Button(self, 'default', lambda:self.parent.reset_nodes(default_settings=True), 0, 2)
+        self.pause_button = Button(self, 'pause', lambda: self.settings.__setattr__('paused', not self.settings.paused), 0, 1)
+        self.dir_button = Button(self, 'swap', self.parent.reverse_direction, 0, 2)
+        self.reset_button = Button(self, 'reset', self.parent.reset_nodes, 0, 3)
+        self.default_button = Button(self, 'default', lambda:self.parent.reset_nodes(default_settings=True), 0, 4)
+
+        # col 1
 
         self.signals_status = StatusBar(self, 'signals', 6, 2, self.signals.__len__)   
 
@@ -364,6 +402,11 @@ class Controller(UIPanel):
         r = self.settings.recver        
         self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
         return True
+
+    def set_log_level(self, level):
+        self.settings.log_level = level
+        self.parent.send_view.refresh()
+        self.parent.recv_view.refresh()
     
     def set_num_nodes(self, num_nodes):
         self.settings.sender = cfg.NODE_NAMES[0]
@@ -375,10 +418,12 @@ class Controller(UIPanel):
         try:
             self.range_slider.kill()
             self.num_nodes_slider.kill()
+            self.level_dropdown.kill()
         except Exception as e:
             logging.debug(f'{e}')
         self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
         self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
+        self.level_dropdown = Dropdown(self, cfg.LOGNAME2LEVEL.keys(), self.settings.log_level, self.set_log_level, 1, 0)
 
 class Simulation:
     def __init__(self):
@@ -425,7 +470,6 @@ class Simulation:
                    self.settings.recver == old):
                 self.settings.recver = choice(cfg.NODE_NAMES[:self.settings.num_nodes])
             self.recv_view.refresh()
-        
     
     def reverse_direction(self):
         tmp = self.settings.sender
@@ -523,28 +567,20 @@ class Simulation:
                         self.name2node[self.settings.recver].toggle_online()
                     # view mode: routes
                     if event.key == pg.K_1:
-                        self.send_view.mode = 'routes'
-                        self.recv_view.mode = 'routes'
-                        self.send_view.refresh()
-                        self.recv_view.refresh()
+                        self.send_view.set_mode('routes')
+                        self.recv_view.set_mode('routes')
                     # view mode: neighbors
                     if event.key == pg.K_2:
-                        self.send_view.mode = 'neighbors'
-                        self.recv_view.mode = 'neighbors'
-                        self.send_view.refresh()
-                        self.recv_view.refresh()
+                        self.send_view.set_mode('neighbors')
+                        self.recv_view.set_mode('neighbors')
                     # view mode: routes
                     if event.key == pg.K_3:
-                        self.send_view.mode = 'inbox'
-                        self.recv_view.mode = 'inbox'
-                        self.send_view.refresh()
-                        self.recv_view.refresh()
+                        self.send_view.set_mode('inbox')
+                        self.recv_view.set_mode('inbox')
                     # view mode: routes
                     if event.key == pg.K_4:
-                        self.send_view.mode = 'log'
-                        self.recv_view.mode = 'log'
-                        self.send_view.refresh()
-                        self.recv_view.refresh()
+                        self.send_view.set_mode('log')
+                        self.recv_view.set_mode('log')
                     
 
                 self.manager.process_events(event)
