@@ -182,6 +182,7 @@ class Node:
         else:
             return hexlify(self.addr).decode('ascii')
     
+    # get most recent data packet
     def pop_rx(self):
         if len(self.rx_queued):
             return self.rx_queued.popleft()
@@ -449,7 +450,7 @@ class Node:
         self.routing_table.add_update(addr=rrep.dest_addr, next_hop=p.send_addr, seq_num=rrep.dest_seq, hops=rrep.hop_count, seq_valid=True, lifetime=rrep.lifetime)
         
         # forward if i am not dest
-        if rrep.dest_addr != self.addr:
+        if p.recv_addr == self.addr and rrep.dest_addr != self.addr:
             # update rrep lifetime
             rrep.lifetime = max(rrep.lifetime, config.ACTIVE_ROUTE_TIMEOUT)
             # get route back to origin
@@ -528,12 +529,12 @@ class Node:
         r = RREQ()
         route = self.routing_table[dest_addr]
         if route:
-            repair = 1 #TODO
-            unknown = 0
+            repair = True #TODO
+            unknown = False
             dest_seq = route.seq_num
         else:
-            repair = 0
-            unknown = 1
+            repair = False
+            unknown = True
             dest_seq = 0
         
         # 6.1: increment seq_num before rreq

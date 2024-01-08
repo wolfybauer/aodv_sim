@@ -31,6 +31,15 @@ NODE_NAMES = ['john',
               'huey',
               'malik']
 
+RANDOM_COLORS = ['pink',
+                 'white',
+                 'orange',
+                 'red',
+                 'purple',
+                 'blue',
+                 'green',
+                 'brown']
+
 LOGLEVEL2NAME = { 10 : 'DEBUG',
                   20 : 'INFO',
                   30 : 'WARNING',

@@ -19,7 +19,8 @@ or use a venv, or whatever.
 ### run
 - `python3 main.py`
 - use gui
-- click on a node to toggle on/offline status
+- left click node to drag / show node ranges
+- right click node to disable
 - keyboard commands:
   - exit : `esc`
   - pause : `space`

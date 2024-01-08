@@ -144,6 +144,7 @@ class Settings:
         self.range = cfg.DEFAULT_RANGE
         self.speed = cfg.DEFAULT_SPEED
         self.log_level = 'DEBUG'
+        self.show_ranges = False
 
 class NodeLogger:
     class LogEntry:
@@ -189,11 +190,14 @@ class SimNode(pg.sprite.Sprite):
         self.log = NodeLogger(level=lambda:cfg.LOGNAME2LEVEL.get(self.settings.__getitem__('log_level')))
         self.aodv = AODVNode(node_addr=self.addr, nickname=nickname, logger=self.log)
         self.image = pg.Surface(cfg.NODE_SPRITE_DIM)
-        self.image.fill(pg.Color(cfg.NODE_COLOR))
+        self.color = cfg.NODE_COLOR
+        self.range_color = choice(cfg.RANDOM_COLORS)
         self.rect = self.image.get_rect(center=position)
-        self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.NODE_COLOR))
         self.inbox = []
         self.online = True
+        self.dragging = False
+        self.set_range_visible = lambda l: self.settings.__setattr__('show_ranges', l)
+        self.get_range_visible = lambda: self.settings.__getitem__('show_ranges')
     
     def emit_signal(self, payload=b'', color='red'):
         self.signals.add(Transmission(parent=self, payload=payload, color=color))
@@ -203,7 +207,19 @@ class SimNode(pg.sprite.Sprite):
         # if click on node
         for event in events:
             if event.type == pg.MOUSEBUTTONDOWN and self.rect.collidepoint(event.pos):
-                self.toggle_online()
+                # right click to disable
+                if event.button == 3:
+                    self.toggle_online()
+                # left click to drag
+                if event.button == 1:
+                    self.dragging = True
+                    self.set_range_visible(True)
+            if event.type == pg.MOUSEBUTTONUP and self.dragging and event.button == 1:
+                self.dragging = False
+                self.set_range_visible(False)
+            if event.type == pg.MOUSEMOTION and self.dragging:
+                self.rect.move_ip(event.rel)
+                
 
         # update aodv if node online
         if self.online and not self.settings.paused:
@@ -231,18 +247,27 @@ class SimNode(pg.sprite.Sprite):
             if rx:
                 self.inbox.append(rx)
     
-    def draw_address(self, screen):
-        addr_pos = self.rect.x, self.rect.y - 25
-        screen.blit(self.addr_surf, addr_pos)
-    
     def toggle_online(self):
         self.online = not self.online
         if self.online:
-            self.image.fill(pg.Color(cfg.NODE_COLOR))
-            self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.NODE_COLOR))
+            self.color = cfg.NODE_COLOR
         else:
-            self.image.fill(pg.Color(cfg.OFFLINE_COLOR))
-            self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(cfg.OFFLINE_COLOR))
+            self.color = cfg.OFFLINE_COLOR
+    
+    def draw(self, surface):
+        # draw range
+        if self.get_range_visible():
+            color = self.range_color
+            pg.draw.circle(surface, self.range_color, self.rect.center, self.settings.range, 1)
+        else:
+            color = self.color
+        self.image.fill(pg.Color(color))
+        self.addr_surf = font.render(self.aodv.whoami(), True, pg.Color(color))
+        # draw address
+        addr_pos = self.rect.x, self.rect.y - 25
+        surface.blit(self.addr_surf, addr_pos)
+
+
     
         
 # signal class
@@ -304,8 +329,8 @@ class NodeViewer(UIPanel):
             self.node_dropdown.kill()
             self.mode_dropdown.kill()
             self.active_node().log.ready = True
-        except Exception as e:
-            logging.debug(f'{e}')
+        except AttributeError:
+            pass
         self.node_dropdown = Dropdown(self, options_list=cfg.NODE_NAMES[:self.settings.num_nodes],
                                       start_option=self.settings[self.which],
                                       callback=lambda s: self.settings.__setattr__(self.which, s),
@@ -401,6 +426,7 @@ class Controller(UIPanel):
         s = self.settings.sender
         r = self.settings.recver        
         self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
+        # self.parent.name2node[s].aodv.ping(self.parent.name2addr[r])
         return True
 
     def set_log_level(self, level):
@@ -413,14 +439,18 @@ class Controller(UIPanel):
         self.settings.recver = cfg.NODE_NAMES[0]
         self.settings.num_nodes = num_nodes
         self.parent.reset_nodes()
+        while self.settings.recver == self.settings.sender:
+            self.settings.recver = choice(cfg.NODE_NAMES[:num_nodes])
+        self.parent.send_view.refresh()
+        self.parent.recv_view.refresh()
     
     def refresh(self):
         try:
             self.range_slider.kill()
             self.num_nodes_slider.kill()
             self.level_dropdown.kill()
-        except Exception as e:
-            logging.debug(f'{e}')
+        except AttributeError:
+            pass
         self.range_slider = Slider(self, 'range', (cfg.MIN_RANGE,cfg.MAX_RANGE), self.settings.range, lambda v: self.settings.__setattr__('range', v), 6, 0)
         self.num_nodes_slider = Slider(self, 'nodes', (3,len(cfg.NODE_NAMES)), self.settings.num_nodes, self.set_num_nodes, 6, 1)
         self.level_dropdown = Dropdown(self, cfg.LOGNAME2LEVEL.keys(), self.settings.log_level, self.set_log_level, 1, 0)
@@ -538,7 +568,6 @@ class Simulation:
                         self.settings.paused = not self.settings.paused
                     # default settings
                     if event.key == pg.K_d:
-                        # self.settings.default()
                         self.reset_nodes(default_settings=True)
                     # reset
                     if event.key == pg.K_r:
@@ -602,7 +631,7 @@ class Simulation:
                 for s in self.signals:
                     s.draw(self.sim_surf)
                 for n in self.nodes:
-                    n.draw_address(self.screen)
+                    n.draw(self.screen)
             
             # draw gui
             self.manager.draw_ui(self.screen)
