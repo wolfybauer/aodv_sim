@@ -145,6 +145,7 @@ class Settings:
         self.speed = cfg.DEFAULT_SPEED
         self.log_level = 'DEBUG'
         self.show_ranges = False
+        self.shift_held = False
 
 class NodeLogger:
     class LogEntry:
@@ -198,6 +199,8 @@ class SimNode(pg.sprite.Sprite):
         self.dragging = False
         self.set_range_visible = lambda l: self.settings.__setattr__('show_ranges', l)
         self.get_range_visible = lambda: self.settings.__getitem__('show_ranges')
+        self.set_as_sender = lambda: parent.set_active_node('sender', self.nickname)
+        self.set_as_recver = lambda: parent.set_active_node('recver', self.nickname)
     
     def emit_signal(self, payload=b'', color='red'):
         self.signals.add(Transmission(parent=self, payload=payload, color=color))
@@ -214,6 +217,10 @@ class SimNode(pg.sprite.Sprite):
                 if event.button == 1:
                     self.dragging = True
                     self.set_range_visible(True)
+                    if self.settings.shift_held:
+                        self.set_as_recver()
+                    else:
+                        self.set_as_sender()
             if event.type == pg.MOUSEBUTTONUP and self.dragging and event.button == 1:
                 self.dragging = False
                 self.set_range_visible(False)
@@ -428,6 +435,13 @@ class Controller(UIPanel):
         self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
         # self.parent.name2node[s].aodv.ping(self.parent.name2addr[r])
         return True
+    
+    def send_hello(self):
+        s = self.settings.sender
+        r = self.settings.recver        
+        self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'hello')
+        # self.parent.name2node[s].aodv.ping(self.parent.name2addr[r])
+        return True
 
     def set_log_level(self, level):
         self.settings.log_level = level
@@ -436,11 +450,9 @@ class Controller(UIPanel):
     
     def set_num_nodes(self, num_nodes):
         self.settings.sender = cfg.NODE_NAMES[0]
-        self.settings.recver = cfg.NODE_NAMES[0]
+        self.settings.recver = cfg.NODE_NAMES[1]
         self.settings.num_nodes = num_nodes
         self.parent.reset_nodes()
-        while self.settings.recver == self.settings.sender:
-            self.settings.recver = choice(cfg.NODE_NAMES[:num_nodes])
         self.parent.send_view.refresh()
         self.parent.recv_view.refresh()
     
@@ -505,6 +517,14 @@ class Simulation:
         tmp = self.settings.sender
         self.settings.sender = self.settings.recver
         self.settings.recver = tmp
+        self.send_view.refresh()
+        self.recv_view.refresh()
+    
+    def set_active_node(self, which_node, nickname):
+        self.settings.__setattr__(which_node, nickname)
+        other = 'recver' if which_node == 'sender' else 'sender'
+        while self.settings[other] == self.settings[which_node]:
+            self.settings.__setattr__(other, choice(cfg.NODE_NAMES[:self.settings.num_nodes]))
         self.send_view.refresh()
         self.recv_view.refresh()
 
@@ -575,6 +595,9 @@ class Simulation:
                     # ping
                     if event.key == pg.K_p:
                         self.ctl.send_ping()
+                    # hello
+                    if event.key == pg.K_h:
+                        self.ctl.send_hello()
                     # direction
                     if event.key == pg.K_s:
                         self.reverse_direction()
@@ -610,6 +633,14 @@ class Simulation:
                     if event.key == pg.K_4:
                         self.send_view.set_mode('log')
                         self.recv_view.set_mode('log')
+                    # shift key
+                    if event.key == pg.K_LSHIFT or event.key == pg.K_RSHIFT:
+                        self.settings.shift_held = True
+                
+                if event.type == pg.KEYUP:
+                    #shift key
+                    if event.key == pg.K_LSHIFT or event.key == pg.K_RSHIFT:
+                        self.settings.shift_held = False
                     
 
                 self.manager.process_events(event)
