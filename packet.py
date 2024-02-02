@@ -263,6 +263,28 @@ class HELLO(RREP):
     def __init__(self, raw:bytes=b''):
         super().__init__(raw)
 
+class ACK:
+    def __repr__(self):
+        return '<'+",".join(f"{k}={v}" for k, v in self.__dict__.items())+'>'
+    def __eq__(self, other) -> bool:
+        for k,v in self.__dict__.items():
+            if not v == other.__dict__[k]:
+                return False
+        return True
+    def __init__(self, raw:bytes=b''):
+        if raw:
+            self.unpack(raw)
+        else:
+            self.orig_seq = 0
+            self.data_seq = 0
+    def set_data(self, orig_seq:int, data_seq:int=0):
+        self.orig_seq = orig_seq
+        self.data_seq = data_seq
+    def unpack(self, raw:bytes):
+        self.orig_seq, self.data_seq = struct.unpack('>LL', raw)
+    def pack(self):
+        return struct.pack('>LL', self.orig_seq, self.data_seq)
+
 class DATAGRAM:
     def __repr__(self):
         return '<'+",".join(f"{k}={v}" for k, v in self.__dict__.items())+'>'
@@ -279,19 +301,26 @@ class DATAGRAM:
             self.orig_addr = b''
             self.orig_seq = 0
             self.data = ''
+            self.req_ack = False
     def set_data(self, dest_addr:bytes, orig_addr:bytes, orig_seq:int, data:str):
         self.dest_addr = dest_addr
         self.orig_addr = orig_addr
         self.orig_seq = orig_seq
         self.data = data
+    def set_flags(self, req_ack:bool):
+        self.req_ack = req_ack
     def unpack(self, raw:bytes):
-        data_len = len(raw) - DATAGRAM_HEADER_LEN
         self.dest_addr = raw[:8]
         self.orig_addr = raw[8:16]
-        self.orig_seq, self.data = struct.unpack(f'>L{data_len}s', raw[16:])
+        raw = raw[16:]
+        data_len = len(raw) - 4 - 1
+        self.orig_seq, flags, self.data = struct.unpack(f'>LB{data_len}s', raw)
+        self.req_ack = flags & 0b1
+
     def pack(self):
         raw = self.dest_addr + self.orig_addr
-        return raw + struct.pack(f'>L{len(self.data)}s', self.orig_seq, self.data.encode('ascii'))
+        flags = int(self.req_ack)
+        return raw + struct.pack(f'>LB{len(self.data)}s', self.orig_seq, flags, self.data.encode('ascii'))
 
 
 

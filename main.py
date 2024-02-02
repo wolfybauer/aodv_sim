@@ -244,6 +244,8 @@ class SimNode(pg.sprite.Sprite):
                     c = cfg.RERR_COLOR
                 elif raw[16] == AODVType.HELLO: # hello
                     c = cfg.HELLO_COLOR
+                elif raw[16] == AODVType.ACK: # hello
+                    c = cfg.ACK_COLOR
                 elif raw[16] == AODVType.DATA: # data
                     c = cfg.DATA_COLOR
                 else:
@@ -342,7 +344,7 @@ class NodeViewer(UIPanel):
                                       start_option=self.settings[self.which],
                                       callback=lambda s: self.settings.__setattr__(self.which, s),
                                       x=0, y=0)
-        self.mode_dropdown = Dropdown(self, options_list=['routes', 'neighbors', 'inbox', 'log'],
+        self.mode_dropdown = Dropdown(self, options_list=['routes', 'pre', 'neighbors', 'inbox', 'log'],
                                       start_option=self.mode,
                                       callback=lambda m: self.__setattr__('mode', m),
                                       x=1, y=0)        
@@ -363,6 +365,14 @@ class NodeViewer(UIPanel):
         out = f'{"NAME":<9}{"NEXT":<9}{"SEQ":<8}{"HOPS":<5}{"LIFE":<5}{"VALID"}'
         for k,v in n.aodv.routing_table.items():
             out += f'\n{a2n[k]:<9}{a2n.get(v.next_hop, "???"):<9}{v.seq_num:<8}{v.hops:<5}{v.remaining():<5}{v.valid()}'
+        self.data_box.set_text(out)
+    
+    def _print_precursors(self):
+        a2n = self.parent.addr2name
+        n = self.active_node()
+        out = f'{"DEST":<9}{"PRECURSORS":<9}'
+        for k,v in n.aodv.routing_table.items():
+            out += f'\n{a2n[k]:<9}{[a2n[i] for i in v.precursors]}'
         self.data_box.set_text(out)
         
     def _print_inbox(self):
@@ -398,6 +408,8 @@ class NodeViewer(UIPanel):
         self._print_info()
         if self.mode == 'routes':
             self._print_routes()
+        if self.mode == 'pre':
+            self._print_precursors()
         elif self.mode == 'neighbors':
             self._print_neighbors()
         elif self.mode == 'inbox':
@@ -432,8 +444,7 @@ class Controller(UIPanel):
     def send_ping(self):
         s = self.settings.sender
         r = self.settings.recver        
-        self.parent.name2node[s].aodv.send(self.parent.name2addr[r], 'ping')
-        # self.parent.name2node[s].aodv.ping(self.parent.name2addr[r])
+        self.parent.name2node[s].aodv.ping(self.parent.name2addr[r])
         return True
     
     def send_hello(self):
@@ -633,6 +644,10 @@ class Simulation:
                     if event.key == pg.K_4:
                         self.send_view.set_mode('log')
                         self.recv_view.set_mode('log')
+                    # view mode: precursors
+                    if event.key == pg.K_5:
+                        self.send_view.set_mode('pre')
+                        self.recv_view.set_mode('pre')
                     # shift key
                     if event.key == pg.K_LSHIFT or event.key == pg.K_RSHIFT:
                         self.settings.shift_held = True
