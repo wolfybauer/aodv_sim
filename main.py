@@ -344,7 +344,7 @@ class NodeViewer(UIPanel):
                                       start_option=self.settings[self.which],
                                       callback=lambda s: self.settings.__setattr__(self.which, s),
                                       x=0, y=0)
-        self.mode_dropdown = Dropdown(self, options_list=['routes', 'pre', 'neighbors', 'inbox', 'log'],
+        self.mode_dropdown = Dropdown(self, options_list=['routes', 'precursors', 'neighbors', 'inbox', 'log'],
                                       start_option=self.mode,
                                       callback=lambda m: self.__setattr__('mode', m),
                                       x=1, y=0)        
@@ -408,7 +408,7 @@ class NodeViewer(UIPanel):
         self._print_info()
         if self.mode == 'routes':
             self._print_routes()
-        if self.mode == 'pre':
+        if self.mode == 'precursors':
             self._print_precursors()
         elif self.mode == 'neighbors':
             self._print_neighbors()
@@ -632,22 +632,23 @@ class Simulation:
                     if event.key == pg.K_1:
                         self.send_view.set_mode('routes')
                         self.recv_view.set_mode('routes')
-                    # view mode: neighbors
+                    # view mode: precursors
                     if event.key == pg.K_2:
+                        self.send_view.set_mode('precursors')
+                        self.recv_view.set_mode('precursors')
+                    # view mode: neighbors
+                    if event.key == pg.K_3:
                         self.send_view.set_mode('neighbors')
                         self.recv_view.set_mode('neighbors')
-                    # view mode: routes
-                    if event.key == pg.K_3:
+                    # view mode: inbox
+                    if event.key == pg.K_4:
                         self.send_view.set_mode('inbox')
                         self.recv_view.set_mode('inbox')
-                    # view mode: routes
-                    if event.key == pg.K_4:
+                    # view mode: log
+                    if event.key == pg.K_5:
                         self.send_view.set_mode('log')
                         self.recv_view.set_mode('log')
-                    # view mode: precursors
-                    if event.key == pg.K_5:
-                        self.send_view.set_mode('pre')
-                        self.recv_view.set_mode('pre')
+                    
                     # shift key
                     if event.key == pg.K_LSHIFT or event.key == pg.K_RSHIFT:
                         self.settings.shift_held = True
